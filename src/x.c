@@ -105,6 +105,8 @@ static con_state *state_for_frame(xcb_window_t window) {
 }
 
 /*
+<<<<<<< HEAD
+=======
  * Changes the atoms on the root window and the windows themselves to properly
  * reflect the current focus for ewmh compliance.
  *
@@ -126,6 +128,7 @@ static void change_ewmh_focus(xcb_window_t new_focus, xcb_window_t old_focus) {
 }
 
 /*
+>>>>>>> upstream/gaps-next
  * Initializes the X11 part for the given container. Called exactly once for
  * every container from con_new().
  *
@@ -367,6 +370,12 @@ static void x_draw_title_border(Con *con, struct deco_render_params *p) {
 
     Rect *dr = &(con->deco_rect);
 
+<<<<<<< HEAD
+    color_t gradient_inner = p->color->border;
+    gradient_inner.alpha = 170.0 / 255.0;
+    color_t gradient_outer = p->color->border;
+    gradient_outer.alpha = 102.0 / 255.0;
+=======
     /* Left */
     draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
                         dr->x, dr->y, 1, dr->height);
@@ -378,10 +387,68 @@ static void x_draw_title_border(Con *con, struct deco_render_params *p) {
     /* Top */
     draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
                         dr->x, dr->y, dr->width, 1);
+>>>>>>> upstream/gaps-next
 
     /* Bottom */
     draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
+<<<<<<< HEAD
+                        dr->x + 3, dr->y, dr->width - 6, 1);
+    /* Left side */
+    if (con->parent->layout != L_TABBED || con == TAILQ_FIRST(&(con->parent->nodes_head))) {
+
+        /* Body */
+        draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
+                            dr->x + 1, dr->y + 1, 2, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
+                            dr->x + 1, dr->y + 2, 1, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
+                            dr->x, dr->y + 3, 1, dr->height - 3);
+
+        /* AA */
+        draw_util_rectangle(&(con->parent->frame_buffer),
+                            gradient_inner,
+                            dr->x, dr->y + 2, 1, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer),
+                            gradient_inner,
+                            dr->x + 2, dr->y, 1, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer),
+                            gradient_outer,
+                            dr->x, dr->y + 1, 1, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer),
+                            gradient_outer,
+                            dr->x + 1, dr->y, 1, 1);
+    }
+
+    /* Right side */
+    if (con->parent->layout != L_TABBED || TAILQ_NEXT(con, nodes) == NULL) {
+
+        /* Body */
+        draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
+                            dr->x + dr->width - 3, dr->y + 1, 2, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
+                            dr->x + dr->width - 2, dr->y + 2, 1, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
+                            dr->x + dr->width - 1, dr->y + 3, 1, dr->height - 3);
+        /* AA */
+        draw_util_rectangle(&(con->parent->frame_buffer),
+                            gradient_inner,
+                            dr->x + dr->width - 1, dr->y + 2, 1, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer),
+                            gradient_inner,
+                            dr->x + dr->width - 3, dr->y, 1, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer),
+                            gradient_outer,
+                            dr->x + dr->width - 1, dr->y + 1, 1, 1);
+        draw_util_rectangle(&(con->parent->frame_buffer),
+                            gradient_outer,
+                            dr->x + dr->width - 2, dr->y, 1, 1);
+    }
+
+    /* draw_util_rectangle(&(con->parent->frame_buffer), p->color->border, */
+    /*                     dr->x + deco_diff_l, dr->y + dr->height - 1, dr->width - (deco_diff_l + deco_diff_r), 1); */
+=======
                         dr->x, dr->y + dr->height - 1, dr->width, 1);
+>>>>>>> upstream/gaps-next
 }
 
 static void x_draw_decoration_after_title(Con *con, struct deco_render_params *p) {
@@ -403,6 +470,26 @@ static void x_draw_decoration_after_title(Con *con, struct deco_render_params *p
                             dr->height);
     }
 
+<<<<<<< HEAD
+    /* Draw a 1px separator line before and after every tab, so that tabs can
+     * be easily distinguished. */
+    if (con->parent->layout == L_TABBED) {
+        /* Left side */
+        /* draw_util_rectangle(&(con->parent->frame_buffer), p->color->border, */
+        /*                     dr->x, dr->y, 1, dr->height); */
+
+        /* Right side */
+        if (TAILQ_NEXT(con, nodes) != NULL) {
+            draw_util_rectangle(&(con->parent->frame_buffer), p->color->background,
+                                dr->x + dr->width - 3, dr->y + 1, 6, dr->height - 1);
+            draw_util_rectangle(&(con->parent->frame_buffer), p->color->border,
+                                dr->x + dr->width - 3, dr->y, 6, 1);
+            draw_util_rectangle(&(con->parent->frame_buffer), draw_util_hex_to_color("#ffffff24"),
+                                dr->x + dr->width - 3, dr->y + 1, 8, 1);
+
+            draw_util_rectangle(&(con->parent->frame_buffer), draw_util_hex_to_color("#ffffff24"),
+                                dr->x + dr->width, dr->y + 6, 1, 14);
+=======
     /* Redraw the border. */
     x_draw_title_border(con, p);
 }
@@ -453,6 +540,7 @@ static size_t x_get_border_rectangles(Con *con, xcb_rectangle_t rectangles[4]) {
                 .width = con->rect.width + br.width,
                 .height = br.y,
             };
+>>>>>>> upstream/gaps-next
         }
     }
 
@@ -611,7 +699,21 @@ void x_draw_decoration(Con *con) {
 
     /* 4: paint the bar */
     draw_util_rectangle(&(parent->frame_buffer), p->color->background,
-                        con->deco_rect.x, con->deco_rect.y, con->deco_rect.width, con->deco_rect.height);
+                        con->deco_rect.x + 3, con->deco_rect.y + 1, con->deco_rect.width - 6, 1);
+    draw_util_rectangle(&(parent->frame_buffer), p->color->background,
+                        con->deco_rect.x + 2, con->deco_rect.y + 2, con->deco_rect.width - 4, 1);
+    draw_util_rectangle(&(parent->frame_buffer), p->color->background,
+                        con->deco_rect.x + 1, con->deco_rect.y + 3, con->deco_rect.width - 2, con->deco_rect.height - 2);
+    draw_util_rectangle(&(parent->frame_buffer), p->color->background,
+                        con->deco_rect.x + 3, con->deco_rect.y + 1, con->deco_rect.width - 6, 1);
+    if (con->parent->layout != L_TABBED || con == TAILQ_FIRST(&(con->parent->nodes_head))) {
+        draw_util_rectangle(&(parent->frame_buffer), p->color->background,
+                            con->deco_rect.x + 2, con->deco_rect.y + 2, 1, 1);
+    }
+    if (con->parent->layout != L_TABBED || TAILQ_NEXT(con, nodes) != NULL) {
+        draw_util_rectangle(&(parent->frame_buffer), p->color->background,
+                            con->deco_rect.x + con->deco_rect.width - 3, con->deco_rect.y + 2, 1, 1);
+    }
 
     /* 5: draw title border */
     x_draw_title_border(con, p);
@@ -1289,7 +1391,7 @@ void x_push_changes(Con *con) {
                      to_focus, focused, focused->name);
                 send_take_focus(to_focus, last_timestamp);
 
-                change_ewmh_focus((con_has_managed_window(focused) ? focused->window->id : XCB_WINDOW_NONE), last_focused);
+                ewmh_update_active_window((con_has_managed_window(focused) ? focused->window->id : XCB_WINDOW_NONE));
 
                 if (to_focus != last_focused && is_con_attached(focused))
                     ipc_send_window_event("focus", focused);
@@ -1308,7 +1410,7 @@ void x_push_changes(Con *con) {
                     xcb_change_window_attributes(conn, focused->window->id, XCB_CW_EVENT_MASK, values);
                 }
 
-                change_ewmh_focus((con_has_managed_window(focused) ? focused->window->id : XCB_WINDOW_NONE), last_focused);
+                ewmh_update_active_window((con_has_managed_window(focused) ? focused->window->id : XCB_WINDOW_NONE));
 
                 if (to_focus != XCB_NONE && to_focus != last_focused && focused->window != NULL && is_con_attached(focused))
                     ipc_send_window_event("focus", focused);
@@ -1323,8 +1425,7 @@ void x_push_changes(Con *con) {
          * root window in order to avoid an X11 fallback mechanism causing a ghosting effect (see #1378). */
         DLOG("Still no window focused, better set focus to the EWMH support window (%d)\n", ewmh_window);
         xcb_set_input_focus(conn, XCB_INPUT_FOCUS_POINTER_ROOT, ewmh_window, last_timestamp);
-        change_ewmh_focus(XCB_WINDOW_NONE, last_focused);
-
+        ewmh_update_active_window(XCB_WINDOW_NONE);
         focused_id = ewmh_window;
         last_focused = XCB_NONE;
     }
