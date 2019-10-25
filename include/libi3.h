@@ -622,6 +622,8 @@ void draw_util_text(i3String *text, surface_t *surface, color_t fg_color, color_
  */
 void draw_util_rectangle(surface_t *surface, color_t color, double x, double y, double w, double h);
 
+void draw_util_arc(surface_t *surface, color_t color, double x, double y, double r, double a, double b);
+
 /**
  * Clears a surface with the given color.
  *

@@ -15,6 +15,8 @@
 #include <xcb/xcb_aux.h>
 #include <cairo/cairo-xcb.h>
 
+#define M_PI 3.14159265358979323846
+
 /* The default visual_type to use if none is specified when creating the surface. Must be defined globally. */
 xcb_visualtype_t *visual_type;
 
@@ -158,6 +160,29 @@ void draw_util_rectangle(surface_t *surface, color_t color, double x, double y, 
     draw_util_set_source_color(surface, color);
 
     cairo_rectangle(surface->cr, x, y, w, h);
+    cairo_fill(surface->cr);
+
+    /* Make sure we flush the surface for any text drawing operations that could follow.
+     * Since we support drawing text via XCB, we need this. */
+    CAIRO_SURFACE_FLUSH(surface->surface);
+
+    cairo_restore(surface->cr);
+}
+
+void draw_util_arc(surface_t *surface, color_t color, double x, double y, double r, double a, double b) {
+    RETURN_UNLESS_SURFACE_INITIALIZED(surface);
+
+    cairo_save(surface->cr);
+
+    /* Using the SOURCE operator will copy both color and alpha information directly
+     * onto the surface rather than blending it. This is a bit more efficient and
+     * allows better color control for the user when using opacity. */
+    cairo_set_operator(surface->cr, CAIRO_OPERATOR_SOURCE);
+    draw_util_set_source_color(surface, color);
+
+    cairo_set_line_width(surface->cr, 1.0);
+    cairo_arc(surface->cr, x, y, r, a * (M_PI/180), b * (M_PI/180));
+    cairo_stroke(surface->cr);
     cairo_fill(surface->cr);
 
     /* Make sure we flush the surface for any text drawing operations that could follow.

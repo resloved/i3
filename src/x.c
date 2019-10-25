@@ -507,7 +507,6 @@ void x_shape_title(Con *con){
  *
  */
 void x_shape_window(Con *con) {
-    DLOG("x_shape_window RESLOVED - Start\n");
     const xcb_query_extension_reply_t *shape_query;
     shape_query = xcb_get_extension_data(conn, &xcb_shape_id);
 
@@ -559,20 +558,16 @@ void x_shape_window(Con *con) {
     xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_CLIP, con->frame.id, 0, 0, pid);
 
     xcb_free_pixmap(conn, pid);
-    DLOG("x_shape_window RESLOVED - END\n");
 }
 
 void x_shape_inner_window(Con *con) {
-    DLOG("x_shape_inner_window RESLOVED - START\n");
     const xcb_query_extension_reply_t *shape_query;
     shape_query = xcb_get_extension_data(conn, &xcb_shape_id);
-    DLOG("x_shape_inner_window RESLOVED - MORE Q\n");
 
     if (!shape_query->present || con->parent->type == CT_DOCKAREA) {
         return;
     }
 
-    DLOG("x_shape_inner_window RESLOVED - FULLSCREEN\n");
     if (con->fullscreen_mode) {
         xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, con->window->id, 0, 0, XCB_NONE);
         xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_CLIP, con->window->id, 0, 0, XCB_NONE);
@@ -582,17 +577,13 @@ void x_shape_inner_window(Con *con) {
     uint16_t w = con->window_rect.width;
     uint16_t h = con->window_rect.height;
 
-    DLOG("x_shape_inner_window RESLOVED - PID - %d\n", conn);
     xcb_pixmap_t pid = xcb_generate_id(conn);
 
-    DLOG("x_shape_inner_window RESLOVED - PIXMAP - %d\n", con->window->id);
     xcb_create_pixmap(conn, 1, pid, con->window->id, w, h);
 
-    DLOG("x_shape_inner_window RESLOVED - CONTEXT_ID\n");
     xcb_gcontext_t black = xcb_generate_id(conn);
     xcb_gcontext_t white = xcb_generate_id(conn);
 
-    DLOG("x_shape_inner_window RESLOVED - GC\n");
     xcb_create_gc(conn, black, pid, XCB_GC_FOREGROUND, (uint32_t[]){0, 0});
     xcb_create_gc(conn, white, pid, XCB_GC_FOREGROUND, (uint32_t[]){1, 0});
 
@@ -614,19 +605,14 @@ void x_shape_inner_window(Con *con) {
                                { 0, r, w, h-d },
     };
 
-    DLOG("x_shape_inner_window RESLOVED - FILL\n");
     xcb_poly_fill_rectangle(conn, pid, black, 1, &bounding);
     xcb_poly_fill_rectangle(conn, pid, white, 2, rects);
     xcb_poly_fill_arc(conn, pid, white, 4, arcs);
 
-    DLOG("x_shape_inner_window RESLOVED - MASK\n");
     xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, con->window->id, 0, 0, pid);
     xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_CLIP, con->window->id, 0, 0, pid);
 
-    DLOG("x_shape_inner_window RESLOVED - FREE\n");
-
     xcb_free_pixmap(conn, pid);
-    DLOG("x_shape_inner_window RESLOVED - END\n");
 }
 
 /*
@@ -743,10 +729,11 @@ void x_draw_decoration(Con *con) {
                                 rectangles[i].height);
         }
 
+        /* Fill Corners */
         draw_util_rectangle(&(con->frame_buffer), p->color->child_border,
                             0,
                             0,
-                            50,
+                            w->width,
                             50);
         
         draw_util_rectangle(&(con->frame_buffer), p->color->child_border,
@@ -766,6 +753,59 @@ void x_draw_decoration(Con *con) {
                             con->rect.height-50,
                             50,
                             50);
+
+        /* Draw Edge */
+        draw_util_rectangle(&(con->frame_buffer), draw_util_hex_to_color("#000000"),
+                            con->border_radius,
+                            0,
+                            con->rect.width - con->border_radius * 2,
+                            1);
+
+        draw_util_rectangle(&(con->frame_buffer), draw_util_hex_to_color("#000000"),
+                            0,
+                            con->border_radius,
+                            1,
+                            con->rect.height - con->border_radius * 2);
+
+        draw_util_rectangle(&(con->frame_buffer), draw_util_hex_to_color("#000000"),
+                            con->border_radius,
+                            con->rect.height - 1,
+                            con->rect.width - con->border_radius * 2,
+                            1);
+
+        draw_util_rectangle(&(con->frame_buffer), draw_util_hex_to_color("#000000"),
+                            con->rect.width - 1,
+                            con->border_radius,
+                            1,
+                            con->rect.height - con->border_radius * 2);
+
+        draw_util_arc(&(con->frame_buffer), draw_util_hex_to_color("#000000"),
+                            con->border_radius + 1,
+                            con->border_radius + 1,
+                            con->border_radius,
+                            180,
+                            270);
+
+        draw_util_arc(&(con->frame_buffer), draw_util_hex_to_color("#000000"),
+                            con->rect.width - con->border_radius - 1,
+                            con->border_radius + 1,
+                            con->border_radius,
+                            270,
+                            360);
+
+        draw_util_arc(&(con->frame_buffer), draw_util_hex_to_color("#000000"),
+                            con->rect.width - con->border_radius - 1,
+                            con->rect.height - con->border_radius - 1,
+                            con->border_radius,
+                            0,
+                            90);
+
+        draw_util_arc(&(con->frame_buffer), draw_util_hex_to_color("#000000"),
+                            con->border_radius + 1,
+                            con->rect.height - con->border_radius - 1,
+                            con->border_radius,
+                            90,
+                            180);
 
         /* Highlight the side of the border at which the next window will be
          * opened if we are rendering a single window within a split container
