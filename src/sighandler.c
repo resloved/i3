@@ -119,7 +119,7 @@ static int sighandler_backtrace(void) {
             NULL};
         execvp(args[0], args);
         DLOG("Failed to exec GDB\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     int status = 0;
 
@@ -155,7 +155,7 @@ static void sighandler_setup(void) {
 
 static void sighandler_create_dialogs(void) {
     Output *output;
-    TAILQ_FOREACH(output, &outputs, outputs) {
+    TAILQ_FOREACH (output, &outputs, outputs) {
         if (!output->active) {
             continue;
         }
@@ -230,7 +230,7 @@ static void sighandler_destroy_dialogs(void) {
 
 static void sighandler_handle_expose(void) {
     dialog_t *current;
-    TAILQ_FOREACH(current, &dialogs, dialogs) {
+    TAILQ_FOREACH (current, &dialogs, dialogs) {
         sighandler_draw_dialog(current);
     }
 

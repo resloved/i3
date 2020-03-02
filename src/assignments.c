@@ -21,7 +21,7 @@ void run_assignments(i3Window *window) {
 
     /* Check if any assignments match */
     Assignment *current;
-    TAILQ_FOREACH(current, &assignments, assignments) {
+    TAILQ_FOREACH (current, &assignments, assignments) {
         if (current->type != A_COMMAND || !match_matches_window(&(current->match), window))
             continue;
 
@@ -48,7 +48,7 @@ void run_assignments(i3Window *window) {
         DLOG("matching assignment, execute command %s\n", current->dest.command);
         char *full_command;
         sasprintf(&full_command, "[id=\"%d\"] %s", window->id, current->dest.command);
-        CommandResult *result = parse_command(full_command, NULL);
+        CommandResult *result = parse_command(full_command, NULL, NULL);
         free(full_command);
 
         if (result->needs_tree_render)
@@ -69,7 +69,7 @@ void run_assignments(i3Window *window) {
 Assignment *assignment_for(i3Window *window, int type) {
     Assignment *assignment;
 
-    TAILQ_FOREACH(assignment, &assignments, assignments) {
+    TAILQ_FOREACH (assignment, &assignments, assignments) {
         if ((type != A_ANY && (assignment->type & type) == 0) ||
             !match_matches_window(&(assignment->match), window))
             continue;

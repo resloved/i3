@@ -87,11 +87,15 @@ struct assignments_head assignments = TAILQ_HEAD_INITIALIZER(assignments);
 struct ws_assignments_head ws_assignments = TAILQ_HEAD_INITIALIZER(ws_assignments);
 
 /* We hope that those are supported and set them to true */
-bool xcursor_supported = true;
 bool xkb_supported = true;
 bool shape_supported = true;
 
 bool force_xinerama = false;
+
+/* Define all atoms as global variables */
+#define xmacro(atom) xcb_atom_t A_##atom;
+#include "atoms.xmacro"
+#undef xmacro
 
 /*
  * This callback is only a dummy, see xcb_prepare_cb.
@@ -166,7 +170,7 @@ static void i3_exit(void) {
         fflush(stderr);
         shm_unlink(shmlogname);
     }
-    ipc_shutdown(SHUTDOWN_REASON_EXIT);
+    ipc_shutdown(SHUTDOWN_REASON_EXIT, -1);
     unlink(config.ipc_socket_path);
     xcb_disconnect(conn);
 
@@ -234,6 +238,20 @@ static void setup_term_handlers(void) {
          * the main loop. */
         ev_unref(main_loop);
     }
+}
+
+static int parse_restart_fd(void) {
+    const char *restart_fd = getenv("_I3_RESTART_FD");
+    if (restart_fd == NULL) {
+        return -1;
+    }
+
+    long int fd = -1;
+    if (!parse_long(restart_fd, &fd, 10)) {
+        ELOG("Malformed _I3_RESTART_FD \"%s\"\n", restart_fd);
+        return -1;
+    }
+    return fd;
 }
 
 int main(int argc, char *argv[]) {
@@ -415,12 +433,12 @@ int main(int argc, char *argv[]) {
                                 "\ti3 floating toggle\n"
                                 "\ti3 kill window\n"
                                 "\n");
-                exit(EXIT_FAILURE);
+                exit(opt == 'h' ? EXIT_SUCCESS : EXIT_FAILURE);
         }
     }
 
     if (only_check_config) {
-        exit(load_configuration(override_configpath, C_VALIDATE) ? 0 : 1);
+        exit(load_configuration(override_configpath, C_VALIDATE) ? EXIT_SUCCESS : EXIT_FAILURE);
     }
 
     /* If the user passes more arguments, we act like i3-msg would: Just send
@@ -622,10 +640,7 @@ int main(int argc, char *argv[]) {
 
     /* Set a cursor for the root window (otherwise the root window will show no
        cursor until the first client is launched). */
-    if (xcursor_supported)
-        xcursor_set_root_cursor(XCURSOR_CURSOR_POINTER);
-    else
-        xcb_set_root_cursor(XCURSOR_CURSOR_POINTER);
+    xcursor_set_root_cursor(XCURSOR_CURSOR_POINTER);
 
     const xcb_query_extension_reply_t *extreply;
     xcb_prefetch_extension_data(conn, &xcb_xkb_id);
@@ -766,9 +781,9 @@ int main(int argc, char *argv[]) {
      * and restarting i3. See #2326. */
     if (layout_path != NULL && randr_base > -1) {
         Con *con;
-        TAILQ_FOREACH(con, &(croot->nodes_head), nodes) {
+        TAILQ_FOREACH (con, &(croot->nodes_head), nodes) {
             Output *output;
-            TAILQ_FOREACH(output, &outputs, outputs) {
+            TAILQ_FOREACH (output, &outputs, outputs) {
                 if (output->active || strcmp(con->name, output_primary_name(output)) != 0)
                     continue;
 
@@ -799,12 +814,13 @@ int main(int argc, char *argv[]) {
         if (!output) {
             ELOG("ERROR: No screen at (%d, %d), starting on the first screen\n",
                  pointerreply->root_x, pointerreply->root_y);
-            output = get_first_output();
         }
-
-        con_activate(con_descend_focused(output_get_content(output->con)));
-        free(pointerreply);
     }
+    if (!output) {
+        output = get_first_output();
+    }
+    con_activate(con_descend_focused(output_get_content(output->con)));
+    free(pointerreply);
 
     tree_render();
 
@@ -847,15 +863,22 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    {
+        const int restart_fd = parse_restart_fd();
+        if (restart_fd != -1) {
+            DLOG("serving restart fd %d", restart_fd);
+            ipc_client *client = ipc_new_client_on_fd(main_loop, restart_fd);
+            ipc_confirm_restart(client);
+            unsetenv("_I3_RESTART_FD");
+        }
+    }
+
     /* Set up i3 specific atoms like I3_SOCKET_PATH and I3_CONFIG_PATH */
     x_set_i3_atoms();
     ewmh_update_workarea();
 
     /* Set the ewmh desktop properties. */
-    ewmh_update_current_desktop();
-    ewmh_update_number_of_desktops();
-    ewmh_update_desktop_names();
-    ewmh_update_desktop_viewport();
+    ewmh_update_desktop_properties();
 
     struct ev_io *xcb_watcher = scalloc(1, sizeof(struct ev_io));
     xcb_prepare = scalloc(1, sizeof(struct ev_prepare));
@@ -983,10 +1006,10 @@ int main(int argc, char *argv[]) {
 
     /* Start i3bar processes for all configured bars */
     Barconfig *barconfig;
-    TAILQ_FOREACH(barconfig, &barconfigs, configs) {
+    TAILQ_FOREACH (barconfig, &barconfigs, configs) {
         char *command = NULL;
         sasprintf(&command, "%s %s --bar_id=%s --socket=\"%s\"",
-                  barconfig->i3bar_command ? barconfig->i3bar_command : "i3bar",
+                  barconfig->i3bar_command ? barconfig->i3bar_command : "exec i3bar",
                   barconfig->verbose ? "-V" : "",
                   barconfig->id, current_socketpath);
         LOG("Starting bar process: %s\n", command);
