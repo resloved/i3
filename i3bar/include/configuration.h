@@ -29,23 +29,18 @@ typedef struct binding_t {
     char *command;
     bool release;
 
-    TAILQ_ENTRY(binding_t)
-    bindings;
+    TAILQ_ENTRY(binding_t) bindings;
 } binding_t;
 
 typedef struct tray_output_t {
     char *output;
 
-    TAILQ_ENTRY(tray_output_t)
-    tray_outputs;
+    TAILQ_ENTRY(tray_output_t) tray_outputs;
 } tray_output_t;
 
 typedef struct config_t {
     uint32_t modifier;
-
-    TAILQ_HEAD(bindings_head, binding_t)
-    bindings;
-
+    TAILQ_HEAD(bindings_head, binding_t) bindings;
     position_t position;
     bool verbose;
     uint32_t bar_height;
@@ -53,16 +48,14 @@ typedef struct config_t {
     struct xcb_color_strings_t colors;
     bool disable_binding_mode_indicator;
     bool disable_ws;
+    int ws_min_width;
     bool strip_ws_numbers;
     bool strip_ws_name;
     char *bar_id;
     char *command;
     char *fontname;
     i3String *separator_symbol;
-
-    TAILQ_HEAD(tray_outputs_head, tray_output_t)
-    tray_outputs;
-
+    TAILQ_HEAD(tray_outputs_head, tray_output_t) tray_outputs;
     int tray_padding;
     int num_outputs;
     char **outputs;
@@ -74,7 +67,7 @@ typedef struct config_t {
            S_SHOW = 1 } hidden_state;
 } config_t;
 
-config_t config;
+extern config_t config;
 
 /**
  * Start parsing the received bar configuration JSON string

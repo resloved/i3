@@ -1,7 +1,7 @@
 IPC interface (interprocess communication)
 ==========================================
 Michael Stapelberg <michael@i3wm.org>
-September 2017
+June 2020
 
 This document describes how to interface with i3 from a separate process. This
 is useful for example to remote-control i3 (to write test cases for example) or
@@ -66,6 +66,7 @@ to do that).
 | 9 | +GET_CONFIG+ | <<_config_reply,CONFIG>> | Returns the last loaded i3 config.
 | 10 | +SEND_TICK+ | <<_tick_reply,TICK>> | Sends a tick event with the specified payload.
 | 11 | +SYNC+ | <<_sync_reply,SYNC>> | Sends an i3 sync event with the specified random value to the specified window.
+| 12 | +GET_BINDING_STATE+ | <<_binding_state_reply,BINDING_STATE>> | Request the current binding state, i.e. the currently active binding mode name.
 |======================================================
 
 So, a typical message could look like this:
@@ -80,7 +81,8 @@ Or, as a hexdump:
 ------------------------------------------------------------------------------
 
 To generate and send such a message, you could use the following code in Perl:
-------------------------------------------------------------
+
+-------------------------------------------------------------------------------
 sub format_ipc_command {
     my ($msg) = @_;
     my $len;
@@ -90,7 +92,7 @@ sub format_ipc_command {
 }
 
 $sock->write(format_ipc_command("exit"));
-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 == Receiving replies from i3
 
@@ -130,6 +132,8 @@ GET_CONFIG (9)::
 	Reply to the GET_CONFIG message.
 TICK (10)::
 	Reply to the SEND_TICK message.
+GET_BINDING_STATE (12)::
+	Reply to the GET_BINDING_STATE message.
 
 [[_command_reply]]
 === COMMAND reply
@@ -138,9 +142,31 @@ The reply consists of a list of serialized maps for each command that was
 parsed. Each has the property +success (bool)+ and may also include a
 human-readable error message in the property +error (string)+.
 
+NOTE: When sending the `restart` command, you will get a singular reply once the
+restart completed. All IPC connection states (e.g. subscriptions) will reset and
+all but one socket will be closed. Libraries must be able to cope with this by
+aligning their internal states. It is also recommended that libraries close
+the last remaining socket(one which replied to `restart` command) to achieve
+the full reset.
+
+NOTE: It is easiest to always send the `restart` command alone: due to i3’s
+state reset, the reply messages of preceding commands are lost, and following
+commands will not be executed.
+
+NOTE: When processing the `exit` command, i3 will immediately exit without
+sending a reply. Expect the socket to be shut down.
+
 *Example:*
 -------------------
 [{ "success": true }]
+-------------------
+
+When the specified command cannot be parsed, `success` will be false and
+`parse_error` will be true:
+
+*Example:*
+-------------------
+[{ "success": false, "parse_error": true }]
 -------------------
 
 [[_workspaces_reply]]
@@ -149,12 +175,16 @@ human-readable error message in the property +error (string)+.
 The reply consists of a serialized list of workspaces. Each workspace has the
 following properties:
 
+id (integer)::
+	The internal ID (actually a C pointer value) of this container. Do not
+	make any assumptions about it. You can use it to (re-)identify and
+	address containers when talking to i3.
 num (integer)::
 	The logical number of the workspace. Corresponds to the command
 	to switch to this workspace. For named workspaces, this will be -1.
 name (string)::
-	The name of this workspace (by default num+1), as changed by the
-	user. Encoded in UTF-8.
+	The name of this workspace if changed by the user, otherwise defaults
+	to the string representation of the +num+ field). Encoded in UTF-8.
 visible (boolean)::
 	Whether this workspace is currently visible on an output (multiple
 	workspaces can be visible at the same time).
@@ -329,12 +359,19 @@ window (integer)::
 	containers. This ID corresponds to what xwininfo(1) and other
 	X11-related tools display (usually in hex).
 window_properties (map)::
-	X11 window properties title, instance, class, window_role and transient_for.
+	This optional field contains all available X11 window properties from the
+	following list: *title*, *instance*, *class*, *window_role* and *transient_for*.
+window_type (string)::
+	The window type (_NET_WM_WINDOW_TYPE). Possible values are undefined, normal,
+	dialog, utility, toolbar, splash, menu, dropdown_menu, popup_menu, tooltip and
+	notification.
 urgent (bool)::
 	Whether this container (window, split container, floating container or
 	workspace) has the urgency hint set, directly or indirectly. All parent
 	containers up until the workspace container will be marked urgent if they
 	have at least one urgent child.
+marks (array of string)::
+	List of marks assigned to container
 focused (bool)::
 	Whether this container is currently focused.
 focus (array of integer)::
@@ -342,6 +379,14 @@ focus (array of integer)::
 	order. Traversing the tree by following the first entry in this array
 	will result in eventually reaching the one node with +focused+ set to
 	true.
+fullscreen_mode (integer)::
+	Whether this container is in fullscreen state or not.
+    Possible values are
+        +0+ (no fullscreen),
+        +1+ (fullscreened on output) or
+        +2+ (fullscreened globally).
+    Note that all workspaces are considered fullscreened on their respective output.
+
 nodes (array of node)::
 	The tiling (i.e. non-floating) child containers of this node.
 floating_nodes (array of node)::
@@ -484,7 +529,7 @@ JSON dump:
    }
  ]
 }
-------------------------
+-----------------------
 
 [[_marks_reply]]
 === MARKS reply
@@ -675,6 +720,17 @@ responded to.
 { "success": true }
 -------------------
 
+[[_binding_state_reply]]
+=== GET_BINDING_STATE reply
+
+The binding_state reply is a map which currently only contains the "name"
+member, which is the name of the currently active binding mode as a string.
+
+*Example:*
+-------------------
+{ "name": "default" }
+-------------------
+
 == Events
 
 [[events]]
@@ -770,7 +826,7 @@ This event consists of a single serialized map containing a property
 +change (string)+ which indicates the type of the change ("focus", "init",
 "empty", "urgent", "reload", "rename", "restored", "move"). A
 +current (object)+ property will be present with the affected workspace
-whenever the type of event affects a workspace (otherwise, it will be +null).
+whenever the type of event affects a workspace (otherwise, it will be +null+).
 
 When the change is "focus", an +old (object)+ property will be present with the
 previous workspace.  When the first switch occurs (when i3 focuses the

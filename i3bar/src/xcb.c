@@ -9,36 +9,21 @@
  */
 #include "common.h"
 
-#include <xcb/xcb.h>
-#include <xcb/xkb.h>
-#include <xcb/xproto.h>
+#include <err.h>
+#include <ev.h>
+#include <i3/ipc.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include <xcb/xcb_aux.h>
 #include <xcb/xcb_cursor.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <string.h>
-#include <i3/ipc.h>
-#include <ev.h>
-#include <errno.h>
-#include <limits.h>
-#include <err.h>
-
-#include <X11/Xlib.h>
-#include <X11/XKBlib.h>
-#include <X11/extensions/XKB.h>
+#include <xcb/xkb.h>
 
 #ifdef I3_ASAN_ENABLED
 #include <sanitizer/lsan_interface.h>
 #endif
 
 #include "libi3.h"
-
-/** This is the equivalent of XC_left_ptr. I’m not sure why xcb doesn’t have a
- * constant for that. */
-#define XCB_CURSOR_LEFT_PTR 68
 
 /* We save the atoms in an easy to access array, indexed by an enum */
 enum {
@@ -140,6 +125,9 @@ static const int tray_loff_px = 2;
 /* Vertical offset between the bar and a separator */
 static const int sep_voff_px = 4;
 
+/* Cached width of the custom separator if one was set */
+int separator_symbol_width;
+
 int _xcb_request_failed(xcb_void_cookie_t cookie, char *err_msg, int line) {
     xcb_generic_error_t *err;
     if ((err = xcb_request_check(xcb_connection, cookie)) != NULL) {
@@ -158,7 +146,7 @@ static uint32_t get_sep_offset(struct status_block *block) {
 static int get_tray_width(struct tc_head *trayclients) {
     trayclient *trayclient;
     int tray_width = 0;
-    TAILQ_FOREACH_REVERSE(trayclient, trayclients, tc_head, tailq) {
+    TAILQ_FOREACH_REVERSE (trayclient, trayclients, tc_head, tailq) {
         if (!trayclient->mapped)
             continue;
         tray_width += icon_size + logical_px(config.tray_padding);
@@ -200,7 +188,7 @@ static uint32_t predict_statusline_length(bool use_short_text) {
     uint32_t width = 0;
     struct status_block *block;
 
-    TAILQ_FOREACH(block, &statusline_head, blocks) {
+    TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text = block->full_text;
         struct status_block_render_desc *render = &block->full_render;
         if (use_short_text && block->short_text != NULL) {
@@ -263,7 +251,7 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
     uint32_t x = 0 - clip_left;
 
     /* Draw the text of each block */
-    TAILQ_FOREACH(block, &statusline_head, blocks) {
+    TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text = block->full_text;
         struct status_block_render_desc *render = &block->full_render;
         if (use_short_text && block->short_text != NULL) {
@@ -288,7 +276,7 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
         color_t bg_color = bar_color;
 
         int full_render_width = render->width + render->x_offset + render->x_append;
-        bool is_border = !!block->border;
+        int has_border = block->border ? 1 : 0;
         if (block->border || block->background || block->urgent) {
             /* Let's determine the colors first. */
             color_t border_color = bar_color;
@@ -310,16 +298,16 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
 
             /* Draw the background. */
             draw_util_rectangle(&output->statusline_buffer, bg_color,
-                                x + is_border * logical_px(block->border_left),
-                                logical_px(1) + is_border * logical_px(block->border_top),
-                                full_render_width - is_border * logical_px(block->border_right + block->border_left),
-                                bar_height - is_border * logical_px(block->border_bottom + block->border_top) - logical_px(2));
+                                x + has_border * logical_px(block->border_left),
+                                logical_px(1) + has_border * logical_px(block->border_top),
+                                full_render_width - has_border * logical_px(block->border_right + block->border_left),
+                                bar_height - has_border * logical_px(block->border_bottom + block->border_top) - logical_px(2));
         }
 
-        draw_util_text(text, &output->statusline_buffer, fg_color, colors.bar_bg,
-                       x + render->x_offset + is_border * logical_px(block->border_left),
+        draw_util_text(text, &output->statusline_buffer, fg_color, bg_color,
+                       x + render->x_offset + has_border * logical_px(block->border_left),
                        bar_height / 2 - font.height / 2,
-                       render->width - is_border * logical_px(block->border_left + block->border_right));
+                       render->width - has_border * logical_px(block->border_left + block->border_right));
         x += full_render_width;
 
         /* If this is not the last block, draw a separator. */
@@ -340,7 +328,7 @@ static void hide_bars(void) {
     }
 
     i3_output *walk;
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (!walk->active) {
             continue;
         }
@@ -365,7 +353,7 @@ static void unhide_bars(void) {
 
     cont_child();
 
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (walk->bar.id == XCB_NONE) {
             continue;
         }
@@ -445,7 +433,7 @@ void init_colors(const struct xcb_color_strings_t *new_colors) {
 
 static bool execute_custom_command(xcb_keycode_t input_code, bool event_is_release) {
     binding_t *binding;
-    TAILQ_FOREACH(binding, &(config.bindings), bindings) {
+    TAILQ_FOREACH (binding, &(config.bindings), bindings) {
         if ((binding->input_code != input_code) || (binding->release != event_is_release))
             continue;
 
@@ -455,11 +443,7 @@ static bool execute_custom_command(xcb_keycode_t input_code, bool event_is_relea
     return false;
 }
 
-static void child_handle_button(xcb_button_press_event_t *event, i3_output *output, uint32_t statusline_x) {
-    if (!child_want_click_events()) {
-        return;
-    }
-
+static void child_handle_button(xcb_button_press_event_t *event, i3_output *output, uint32_t statusline_x, uint32_t statusline_y) {
     if (statusline_x > (uint32_t)output->statusline_width) {
         return;
     }
@@ -467,7 +451,7 @@ static void child_handle_button(xcb_button_press_event_t *event, i3_output *outp
     /* x of the start of the current block relative to the statusline. */
     uint32_t last_block_x = 0;
     struct status_block *block;
-    TAILQ_FOREACH(block, &statusline_head, blocks) {
+    TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text;
         struct status_block_render_desc *render;
         if (output->statusline_short_text && block->short_text != NULL) {
@@ -488,9 +472,13 @@ static void child_handle_button(xcb_button_press_event_t *event, i3_output *outp
         /* x of the click event relative to the current block. */
         const uint32_t relative_x = statusline_x - last_block_x;
         if (relative_x <= full_render_width) {
+            const uint32_t output_x = event->event_x;
+            const uint32_t output_y = statusline_y + event->event_y;
+
             send_block_clicked(event->detail, block->name, block->instance,
                                event->root_x, event->root_y, relative_x,
-                               event->event_y, full_render_width, bar_height,
+                               event->event_y, output_x, output_y,
+                               full_render_width, bar_height,
                                event->state);
             return;
         }
@@ -504,6 +492,15 @@ static void child_handle_button(xcb_button_press_event_t *event, i3_output *outp
 }
 
 /*
+ * Predict the width of a workspace button or the current binding mode indicator.
+ *
+ */
+static int predict_button_width(int name_width) {
+    return MAX(name_width + 2 * logical_px(ws_hoff_px) + 2 * logical_px(1),
+               logical_px(config.ws_min_width));
+}
+
+/*
  * Handle a button press event (i.e. a mouse click on one of our bars).
  * We determine, whether the click occurred on a workspace button or if the scroll-
  * wheel was used and change the workspace appropriately
@@ -513,7 +510,7 @@ static void handle_button(xcb_button_press_event_t *event) {
     /* Determine, which bar was clicked */
     i3_output *walk;
     xcb_window_t bar = event->event;
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (walk->bar.id == bar) {
             break;
         }
@@ -533,8 +530,8 @@ static void handle_button(xcb_button_press_event_t *event) {
     int workspace_width = 0;
     i3_ws *cur_ws = NULL, *clicked_ws = NULL, *ws_walk;
 
-    TAILQ_FOREACH(ws_walk, walk->workspaces, tailq) {
-        int w = 2 * logical_px(ws_hoff_px) + 2 * logical_px(1) + ws_walk->name_width;
+    TAILQ_FOREACH (ws_walk, walk->workspaces, tailq) {
+        int w = predict_button_width(ws_walk->name_width);
         if (x >= workspace_width && x <= workspace_width + w)
             clicked_ws = ws_walk;
         if (ws_walk->visible)
@@ -544,14 +541,14 @@ static void handle_button(xcb_button_press_event_t *event) {
             workspace_width += logical_px(ws_spacing_px);
     }
 
-    if (x > workspace_width) {
+    if (child_want_click_events() && x > workspace_width) {
         const int tray_width = get_tray_width(walk->trayclients);
         /* Calculate the horizontal coordinate (x) of the start of the
          * statusline by subtracting its width and the width of the tray from
          * the bar width. */
-        const int offset = walk->rect.w - walk->statusline_width -
-                           tray_width - logical_px((tray_width > 0) * sb_hoff_px);
-        if (x >= offset) {
+        const int offset_x = walk->rect.w - walk->statusline_width -
+                             tray_width - logical_px((tray_width > 0) * sb_hoff_px);
+        if (x >= offset_x) {
             /* Click was after the start of the statusline, return to avoid
              * executing any other actions even if a click event is not
              * produced eventually. */
@@ -559,8 +556,10 @@ static void handle_button(xcb_button_press_event_t *event) {
             if (!event_is_release) {
                 /* x of the click event relative to the start of the
                  * statusline. */
-                const uint32_t statusline_x = x - offset;
-                child_handle_button(event, walk, statusline_x);
+                const uint32_t statusline_x = x - offset_x;
+                const uint32_t statusline_y = event->root_y - walk->rect.y - event->event_y;
+
+                child_handle_button(event, walk, statusline_x, statusline_y);
             }
 
             return;
@@ -606,7 +605,7 @@ static void handle_button(xcb_button_press_event_t *event) {
             /* if no workspace was clicked, focus our currently visible
              * workspace if it is not already focused */
             if (cur_ws == NULL) {
-                TAILQ_FOREACH(cur_ws, walk->workspaces, tailq) {
+                TAILQ_FOREACH (cur_ws, walk->workspaces, tailq) {
                     if (cur_ws->visible && !cur_ws->focused)
                         break;
                 }
@@ -664,14 +663,11 @@ static void handle_visibility_notify(xcb_visibility_notify_event_t *event) {
     int num_visible = 0;
     i3_output *output;
 
-    SLIST_FOREACH(output, outputs, slist) {
+    SLIST_FOREACH (output, outputs, slist) {
         if (!output->active) {
             continue;
         }
         if (output->bar.id == event->window) {
-            if (output->visible == visible) {
-                return;
-            }
             output->visible = visible;
         }
         num_visible += output->visible;
@@ -679,12 +675,22 @@ static void handle_visibility_notify(xcb_visibility_notify_event_t *event) {
 
     if (num_visible == 0) {
         stop_child();
-    } else if (num_visible == visible) {
-        /* Wake the child only when transitioning from 0 to 1 visible bar.
-         * We cannot transition from 0 to 2 or more visible bars at once since
-         * visibility events are delivered to each window separately */
+    } else {
         cont_child();
     }
+}
+
+/*
+ * Comparison function to sort trayclients in ascending alphanumeric order
+ * according to their class.
+ *
+ */
+static int reorder_trayclients_cmp(const void *_a, const void *_b) {
+    trayclient *a = *((trayclient **)_a);
+    trayclient *b = *((trayclient **)_b);
+
+    int result = strcasecmp_nullable(a->class_class, b->class_class);
+    return result != 0 ? result : strcasecmp_nullable(a->class_instance, b->class_instance);
 }
 
 /*
@@ -694,27 +700,106 @@ static void handle_visibility_notify(xcb_visibility_notify_event_t *event) {
  *
  */
 static void configure_trayclients(void) {
-    trayclient *trayclient;
     i3_output *output;
-    SLIST_FOREACH(output, outputs, slist) {
-        if (!output->active)
+    SLIST_FOREACH (output, outputs, slist) {
+        if (!output->active) {
             continue;
+        }
 
-        int clients = 0;
-        TAILQ_FOREACH_REVERSE(trayclient, output->trayclients, tc_head, tailq) {
-            if (!trayclient->mapped)
-                continue;
-            clients++;
+        int count = 0;
+        trayclient *client;
+        TAILQ_FOREACH (client, output->trayclients, tailq) {
+            if (client->mapped) {
+                count++;
+            }
+        }
 
-            DLOG("Configuring tray window %08x to x=%d\n",
-                 trayclient->win, output->rect.w - (clients * (icon_size + logical_px(config.tray_padding))));
-            uint32_t x = output->rect.w - (clients * (icon_size + logical_px(config.tray_padding)));
+        int idx = 0;
+        trayclient **trayclients = smalloc(count * sizeof(trayclient *));
+        TAILQ_FOREACH (client, output->trayclients, tailq) {
+            if (client->mapped) {
+                trayclients[idx++] = client;
+            }
+        }
+
+        qsort(trayclients, count, sizeof(trayclient *), reorder_trayclients_cmp);
+
+        uint32_t x = output->rect.w;
+        for (idx = count; idx > 0; idx--) {
+            x -= icon_size + logical_px(config.tray_padding);
+
+            DLOG("Configuring tray window %08x to x=%d\n", trayclients[idx - 1]->win, x);
             xcb_configure_window(xcb_connection,
-                                 trayclient->win,
+                                 trayclients[idx - 1]->win,
                                  XCB_CONFIG_WINDOW_X,
                                  &x);
         }
+
+        free(trayclients);
     }
+}
+
+static trayclient *trayclient_and_output_from_window(xcb_window_t win, i3_output **output) {
+    i3_output *o_walk;
+    SLIST_FOREACH (o_walk, outputs, slist) {
+        if (!o_walk->active) {
+            continue;
+        }
+
+        trayclient *client;
+        TAILQ_FOREACH (client, o_walk->trayclients, tailq) {
+            if (client->win == win) {
+                if (output) {
+                    *output = o_walk;
+                }
+                return client;
+            }
+        }
+    }
+    return NULL;
+}
+
+static trayclient *trayclient_from_window(xcb_window_t win) {
+    return trayclient_and_output_from_window(win, NULL);
+}
+
+static void trayclient_update_class(trayclient *client) {
+    xcb_get_property_reply_t *prop = xcb_get_property_reply(
+        conn,
+        xcb_get_property_unchecked(
+            xcb_connection,
+            false,
+            client->win,
+            XCB_ATOM_WM_CLASS,
+            XCB_ATOM_STRING,
+            0,
+            32),
+        NULL);
+    if (prop == NULL || xcb_get_property_value_length(prop) == 0) {
+        DLOG("WM_CLASS not set.\n");
+        free(prop);
+        return;
+    }
+
+    /* We cannot use asprintf here since this property contains two
+     * null-terminated strings (for compatibility reasons). Instead, we
+     * use strdup() on both strings */
+    const size_t prop_length = xcb_get_property_value_length(prop);
+    char *new_class = xcb_get_property_value(prop);
+    const size_t class_class_index = strnlen(new_class, prop_length) + 1;
+
+    free(client->class_instance);
+    free(client->class_class);
+
+    client->class_instance = sstrndup(new_class, prop_length);
+    if (class_class_index < prop_length) {
+        client->class_class = sstrndup(new_class + class_class_index, prop_length - class_class_index);
+    } else {
+        client->class_class = NULL;
+    }
+    DLOG("WM_CLASS changed to %s (instance), %s (class)\n", client->class_instance, client->class_class);
+
+    free(prop);
 }
 
 /*
@@ -847,11 +932,12 @@ static void handle_client_message(xcb_client_message_event_t *event) {
              * exits/crashes. */
             xcb_change_save_set(xcb_connection, XCB_SET_MODE_INSERT, client);
 
-            trayclient *tc = smalloc(sizeof(trayclient));
+            trayclient *tc = scalloc(1, sizeof(trayclient));
             tc->win = client;
             tc->xe_version = xe_version;
             tc->mapped = false;
             TAILQ_INSERT_TAIL(output_for_tray->trayclients, tc, tailq);
+            trayclient_update_class(tc);
 
             if (map_it) {
                 DLOG("Mapping dock client\n");
@@ -879,27 +965,22 @@ static void handle_client_message(xcb_client_message_event_t *event) {
 static void handle_destroy_notify(xcb_destroy_notify_event_t *event) {
     DLOG("DestroyNotify for window = %08x, event = %08x\n", event->window, event->event);
 
-    i3_output *walk;
-    SLIST_FOREACH(walk, outputs, slist) {
-        if (!walk->active)
-            continue;
-        DLOG("checking output %s\n", walk->name);
-        trayclient *trayclient;
-        TAILQ_FOREACH(trayclient, walk->trayclients, tailq) {
-            if (trayclient->win != event->window) {
-                continue;
-            }
-
-            DLOG("Removing tray client with window ID %08x\n", event->window);
-            TAILQ_REMOVE(walk->trayclients, trayclient, tailq);
-            FREE(trayclient);
-
-            /* Trigger an update, we now have more space for the statusline */
-            configure_trayclients();
-            draw_bars(false);
-            return;
-        }
+    i3_output *output;
+    trayclient *client = trayclient_and_output_from_window(event->window, &output);
+    if (!client) {
+        DLOG("WARNING: Could not find corresponding tray window.\n");
+        return;
     }
+
+    DLOG("Removing tray client with window ID %08x\n", event->window);
+    TAILQ_REMOVE(output->trayclients, client, tailq);
+    free(client->class_class);
+    free(client->class_instance);
+    FREE(client);
+
+    /* Trigger an update, we now have more space for the statusline */
+    configure_trayclients();
+    draw_bars(false);
 }
 
 /*
@@ -910,25 +991,18 @@ static void handle_destroy_notify(xcb_destroy_notify_event_t *event) {
 static void handle_map_notify(xcb_map_notify_event_t *event) {
     DLOG("MapNotify for window = %08x, event = %08x\n", event->window, event->event);
 
-    i3_output *walk;
-    SLIST_FOREACH(walk, outputs, slist) {
-        if (!walk->active)
-            continue;
-        DLOG("checking output %s\n", walk->name);
-        trayclient *trayclient;
-        TAILQ_FOREACH(trayclient, walk->trayclients, tailq) {
-            if (trayclient->win != event->window)
-                continue;
-
-            DLOG("Tray client mapped (window ID %08x). Adjusting tray.\n", event->window);
-            trayclient->mapped = true;
-
-            /* Trigger an update, we now have more space for the statusline */
-            configure_trayclients();
-            draw_bars(false);
-            return;
-        }
+    trayclient *client = trayclient_from_window(event->window);
+    if (!client) {
+        DLOG("WARNING: Could not find corresponding tray window.\n");
+        return;
     }
+
+    DLOG("Tray client mapped (window ID %08x). Adjusting tray.\n", event->window);
+    client->mapped = true;
+
+    /* Trigger an update, we now have one extra tray client. */
+    configure_trayclients();
+    draw_bars(false);
 }
 /*
  * Handles UnmapNotify events. These events happen when a tray client hides its
@@ -938,62 +1012,41 @@ static void handle_map_notify(xcb_map_notify_event_t *event) {
 static void handle_unmap_notify(xcb_unmap_notify_event_t *event) {
     DLOG("UnmapNotify for window = %08x, event = %08x\n", event->window, event->event);
 
-    i3_output *walk;
-    SLIST_FOREACH(walk, outputs, slist) {
-        if (!walk->active)
-            continue;
-        DLOG("checking output %s\n", walk->name);
-        trayclient *trayclient;
-        TAILQ_FOREACH(trayclient, walk->trayclients, tailq) {
-            if (trayclient->win != event->window)
-                continue;
-
-            DLOG("Tray client unmapped (window ID %08x). Adjusting tray.\n", event->window);
-            trayclient->mapped = false;
-
-            /* Trigger an update, we now have more space for the statusline */
-            configure_trayclients();
-            draw_bars(false);
-            return;
-        }
+    trayclient *client = trayclient_from_window(event->window);
+    if (!client) {
+        DLOG("WARNING: Could not find corresponding tray window.\n");
+        return;
     }
+
+    DLOG("Tray client unmapped (window ID %08x). Adjusting tray.\n", event->window);
+    client->mapped = false;
+
+    /* Trigger an update, we now have more space for the statusline */
+    configure_trayclients();
+    draw_bars(false);
 }
 
 /*
- * Handle PropertyNotify messages. Currently only the _XEMBED_INFO property is
- * handled, which tells us whether a dock client should be mapped or unmapped.
+ * Handle PropertyNotify messages.
  *
  */
 static void handle_property_notify(xcb_property_notify_event_t *event) {
     DLOG("PropertyNotify\n");
     if (event->atom == atoms[_XEMBED_INFO] &&
         event->state == XCB_PROPERTY_NEW_VALUE) {
+        /* _XEMBED_INFO property tells us whether a dock client should be mapped or unmapped. */
         DLOG("xembed_info updated\n");
-        trayclient *trayclient = NULL, *walk;
-        i3_output *o_walk;
-        SLIST_FOREACH(o_walk, outputs, slist) {
-            if (!o_walk->active)
-                continue;
 
-            TAILQ_FOREACH(walk, o_walk->trayclients, tailq) {
-                if (walk->win != event->window)
-                    continue;
-                trayclient = walk;
-                break;
-            }
-
-            if (trayclient)
-                break;
-        }
-        if (!trayclient) {
-            ELOG("PropertyNotify received for unknown window %08x\n",
-                 event->window);
+        trayclient *client = trayclient_from_window(event->window);
+        if (!client) {
+            ELOG("PropertyNotify received for unknown window %08x\n", event->window);
             return;
         }
+
         xcb_get_property_cookie_t xembedc;
         xembedc = xcb_get_property_unchecked(xcb_connection,
                                              0,
-                                             trayclient->win,
+                                             client->win,
                                              atoms[_XEMBED_INFO],
                                              XCB_GET_PROPERTY_TYPE_ANY,
                                              0,
@@ -1013,14 +1066,19 @@ static void handle_property_notify(xcb_property_notify_event_t *event) {
         DLOG("xembed flags = %d\n", xembed[1]);
         bool map_it = ((xembed[1] & XEMBED_MAPPED) == XEMBED_MAPPED);
         DLOG("map state now %d\n", map_it);
-        if (trayclient->mapped && !map_it) {
+        if (client->mapped && !map_it) {
             /* need to unmap the window */
-            xcb_unmap_window(xcb_connection, trayclient->win);
-        } else if (!trayclient->mapped && map_it) {
+            xcb_unmap_window(xcb_connection, client->win);
+        } else if (!client->mapped && map_it) {
             /* need to map the window */
-            xcb_map_window(xcb_connection, trayclient->win);
+            xcb_map_window(xcb_connection, client->win);
         }
         free(xembedr);
+    } else if (event->atom == XCB_ATOM_WM_CLASS) {
+        trayclient *client = trayclient_from_window(event->window);
+        if (client) {
+            trayclient_update_class(client);
+        }
     }
 }
 
@@ -1032,12 +1090,12 @@ static void handle_property_notify(xcb_property_notify_event_t *event) {
 static void handle_configuration_change(xcb_window_t window) {
     trayclient *trayclient;
     i3_output *output;
-    SLIST_FOREACH(output, outputs, slist) {
+    SLIST_FOREACH (output, outputs, slist) {
         if (!output->active)
             continue;
 
         int clients = 0;
-        TAILQ_FOREACH_REVERSE(trayclient, output->trayclients, tc_head, tailq) {
+        TAILQ_FOREACH_REVERSE (trayclient, output->trayclients, tc_head, tailq) {
             if (!trayclient->mapped)
                 continue;
             clients++;
@@ -1219,22 +1277,11 @@ char *init_xcb_early(void) {
     }
 
     xcb_cursor_context_t *cursor_ctx;
-    if (xcb_cursor_context_new(conn, root_screen, &cursor_ctx) == 0) {
-        cursor = xcb_cursor_load_cursor(cursor_ctx, "left_ptr");
-        xcb_cursor_context_free(cursor_ctx);
-    } else {
-        cursor = xcb_generate_id(xcb_connection);
-        i3Font cursor_font = load_font("cursor", false);
-        xcb_create_glyph_cursor(
-            xcb_connection,
-            cursor,
-            cursor_font.specific.xcb.id,
-            cursor_font.specific.xcb.id,
-            XCB_CURSOR_LEFT_PTR,
-            XCB_CURSOR_LEFT_PTR + 1,
-            0, 0, 0,
-            65535, 65535, 65535);
+    if (xcb_cursor_context_new(conn, root_screen, &cursor_ctx) < 0) {
+        errx(EXIT_FAILURE, "Cannot allocate xcursor context");
     }
+    cursor = xcb_cursor_load_cursor(cursor_ctx, "left_ptr");
+    xcb_cursor_context_free(cursor_ctx);
 
     /* The various watchers to communicate with xcb */
     xcb_io = smalloc(sizeof(ev_io));
@@ -1547,6 +1594,9 @@ void kick_tray_clients(i3_output *output) {
                             0,
                             0);
 
+        free(trayclient->class_class);
+        free(trayclient->class_instance);
+
         /* We remove the trayclient right here. We might receive an UnmapNotify
          * event afterwards, but better safe than sorry. */
         TAILQ_REMOVE(output->trayclients, trayclient, tailq);
@@ -1573,15 +1623,18 @@ void kick_tray_clients(i3_output *output) {
  *
  */
 void destroy_window(i3_output *output) {
-    if (output == NULL) {
-        return;
-    }
-    if (output->bar.id == XCB_NONE) {
+    if (output == NULL || output->bar.id == XCB_NONE) {
         return;
     }
 
     kick_tray_clients(output);
+
+    draw_util_surface_free(xcb_connection, &(output->bar));
+    draw_util_surface_free(xcb_connection, &(output->buffer));
+    draw_util_surface_free(xcb_connection, &(output->statusline_buffer));
     xcb_destroy_window(xcb_connection, output->bar.id);
+    xcb_free_pixmap(xcb_connection, output->buffer.id);
+    xcb_free_pixmap(xcb_connection, output->statusline_buffer.id);
     output->bar.id = XCB_NONE;
 }
 
@@ -1652,7 +1705,7 @@ static i3_output *get_tray_output(void) {
     i3_output *output = NULL;
     if (TAILQ_EMPTY(&(config.tray_outputs))) {
         /* No tray_output specified, use first active output. */
-        SLIST_FOREACH(output, outputs, slist) {
+        SLIST_FOREACH (output, outputs, slist) {
             if (output->active) {
                 return output;
             }
@@ -1666,8 +1719,8 @@ static i3_output *get_tray_output(void) {
     /* If one or more tray_output assignments were specified, we ensure that at
      * least one of them is actually an output managed by this instance. */
     tray_output_t *tray_output;
-    TAILQ_FOREACH(tray_output, &(config.tray_outputs), tray_outputs) {
-        SLIST_FOREACH(output, outputs, slist) {
+    TAILQ_FOREACH (tray_output, &(config.tray_outputs), tray_outputs) {
+        SLIST_FOREACH (output, outputs, slist) {
             if (output->active &&
                 (strcasecmp(output->name, tray_output->output) == 0 ||
                  (strcasecmp(tray_output->output, "primary") == 0 && output->primary))) {
@@ -1688,7 +1741,7 @@ void reconfig_windows(bool redraw_bars) {
     uint32_t values[6];
 
     i3_output *walk;
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (!walk->active) {
             /* If an output is not active, we destroy its bar */
             /* FIXME: Maybe we rather want to unmap? */
@@ -1756,6 +1809,8 @@ void reconfig_windows(bool redraw_bars) {
                                                                       bar_height);
 
             /* Set the WM_CLASS and WM_NAME (we don't need UTF-8) atoms */
+            char *class;
+            int len = sasprintf(&class, "%s%ci3bar%c", config.bar_id, 0, 0);
             xcb_void_cookie_t class_cookie;
             class_cookie = xcb_change_property(xcb_connection,
                                                XCB_PROP_MODE_REPLACE,
@@ -1763,8 +1818,8 @@ void reconfig_windows(bool redraw_bars) {
                                                XCB_ATOM_WM_CLASS,
                                                XCB_ATOM_STRING,
                                                8,
-                                               (strlen("i3bar") + 1) * 2,
-                                               "i3bar\0i3bar\0");
+                                               len,
+                                               class);
 
             char *name;
             sasprintf(&name, "i3bar for output %s", walk->name);
@@ -1922,6 +1977,25 @@ void reconfig_windows(bool redraw_bars) {
 }
 
 /*
+ * Draw the button for a workspace or the current binding mode indicator.
+ *
+ */
+static void draw_button(surface_t *surface, color_t fg_color, color_t bg_color, color_t border_color,
+                        int x, int width, int text_width, i3String *text) {
+    int height = bar_height - 2 * logical_px(1);
+
+    /* Draw the border of the button. */
+    draw_util_rectangle(surface, border_color, x, logical_px(1), width, height);
+
+    /* Draw the inside of the button. */
+    draw_util_rectangle(surface, bg_color, x + logical_px(1), 2 * logical_px(1),
+                        width - 2 * logical_px(1), height - 2 * logical_px(1));
+
+    draw_util_text(text, surface, fg_color, bg_color, x + (width - text_width) / 2,
+                   bar_height / 2 - font.height / 2, text_width);
+}
+
+/*
  * Render the bars, with buttons and statusline
  *
  */
@@ -1932,7 +2006,7 @@ void draw_bars(bool unhide) {
     uint32_t short_statusline_width = predict_statusline_length(true);
 
     i3_output *outputs_walk;
-    SLIST_FOREACH(outputs_walk, outputs, slist) {
+    SLIST_FOREACH (outputs_walk, outputs, slist) {
         int workspace_width = 0;
 
         if (!outputs_walk->active) {
@@ -1951,7 +2025,7 @@ void draw_bars(bool unhide) {
 
         if (!config.disable_ws) {
             i3_ws *ws_walk;
-            TAILQ_FOREACH(ws_walk, outputs_walk->workspaces, tailq) {
+            TAILQ_FOREACH (ws_walk, outputs_walk->workspaces, tailq) {
                 DLOG("Drawing button for WS %s at x = %d, len = %d\n",
                      i3string_as_utf8(ws_walk->name), workspace_width, ws_walk->name_width);
                 color_t fg_color = colors.inactive_ws_fg;
@@ -1976,26 +2050,11 @@ void draw_bars(bool unhide) {
                     unhide = true;
                 }
 
-                /* Draw the border of the button. */
-                draw_util_rectangle(&(outputs_walk->buffer), border_color,
-                                    workspace_width,
-                                    logical_px(1),
-                                    ws_walk->name_width + 2 * logical_px(ws_hoff_px) + 2 * logical_px(1),
-                                    bar_height - 2 * logical_px(1));
+                int w = predict_button_width(ws_walk->name_width);
+                draw_button(&(outputs_walk->buffer), fg_color, bg_color, border_color,
+                            workspace_width, w, ws_walk->name_width, ws_walk->name);
 
-                /* Draw the inside of the button. */
-                draw_util_rectangle(&(outputs_walk->buffer), bg_color,
-                                    workspace_width + logical_px(1),
-                                    2 * logical_px(1),
-                                    ws_walk->name_width + 2 * logical_px(ws_hoff_px),
-                                    bar_height - 4 * logical_px(1));
-
-                draw_util_text(ws_walk->name, &(outputs_walk->buffer), fg_color, bg_color,
-                               workspace_width + logical_px(ws_hoff_px) + logical_px(1),
-                               bar_height / 2 - font.height / 2,
-                               ws_walk->name_width);
-
-                workspace_width += 2 * logical_px(ws_hoff_px) + 2 * logical_px(1) + ws_walk->name_width;
+                workspace_width += w;
                 if (TAILQ_NEXT(ws_walk, tailq) != NULL)
                     workspace_width += logical_px(ws_spacing_px);
             }
@@ -2004,28 +2063,12 @@ void draw_bars(bool unhide) {
         if (binding.name && !config.disable_binding_mode_indicator) {
             workspace_width += logical_px(ws_spacing_px);
 
-            color_t fg_color = colors.binding_mode_fg;
-            color_t bg_color = colors.binding_mode_bg;
-
-            draw_util_rectangle(&(outputs_walk->buffer), colors.binding_mode_border,
-                                workspace_width,
-                                logical_px(1),
-                                binding.width + 2 * logical_px(ws_hoff_px) + 2 * logical_px(1),
-                                bar_height - 2 * logical_px(1));
-
-            draw_util_rectangle(&(outputs_walk->buffer), bg_color,
-                                workspace_width + logical_px(1),
-                                2 * logical_px(1),
-                                binding.width + 2 * logical_px(ws_hoff_px),
-                                bar_height - 4 * logical_px(1));
-
-            draw_util_text(binding.name, &(outputs_walk->buffer), fg_color, bg_color,
-                           workspace_width + logical_px(ws_hoff_px) + logical_px(1),
-                           bar_height / 2 - font.height / 2,
-                           binding.width);
+            int w = predict_button_width(binding.name_width);
+            draw_button(&(outputs_walk->buffer), colors.binding_mode_fg, colors.binding_mode_bg,
+                        colors.binding_mode_border, workspace_width, w, binding.name_width, binding.name);
 
             unhide = true;
-            workspace_width += 2 * logical_px(ws_hoff_px) + 2 * logical_px(1) + binding.width;
+            workspace_width += w;
         }
 
         if (!TAILQ_EMPTY(&statusline_head)) {
@@ -2076,7 +2119,7 @@ void draw_bars(bool unhide) {
  */
 void redraw_bars(void) {
     i3_output *outputs_walk;
-    SLIST_FOREACH(outputs_walk, outputs, slist) {
+    SLIST_FOREACH (outputs_walk, outputs, slist) {
         if (!outputs_walk->active) {
             continue;
         }

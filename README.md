@@ -13,7 +13,7 @@ i3-gaps is a fork of [i3wm](https://www.i3wm.org), a tiling window manager for X
 
 ## How do I install i3-gaps?
 
-Please refer to the [wiki](https://github.com/Airblader/i3/wiki).
+Please refer to the [wiki](https://github.com/Airblader/i3/wiki/installation).
 
 ## Where can I get help?
 
@@ -95,6 +95,11 @@ smart_borders no_gaps
 
 This extends i3's `hide_edge_borders` with a new option. When set, edge-specific borders of a container will be hidden if it's the only container on the workspace and the gaps to the screen edge is `0`.
 
+```
+# Hide edge borders only if there is one window with no gaps
+hide_edge_borders smart_no_gaps
+```
+
 ## i3bar
 
 ### Bar Height
@@ -107,24 +112,3 @@ bar {
     height 25
 }
 ```
-
-### Borders
-
-You can define a border width of each block for each individual side by sending the `border_top`, `border_left`, `border_bottom` and `border_right` keys in the i3bar JSON protocol. Each value, if absent, defaults to `1`, and a value of `0` hides the border for the specified side.
-
-### Transparency and RGBA Colors
-
-By starting i3bar with the `-t` flag, RGBA color mode will be activated. This allows the use of colors with an additional alpha channel. Please note that this has two major implications:
-
-* Due to technical constraints the background of tray icons will always be fully transparent.
-* We consider this feature unstable in the sense that issues will only be fixed if they do not require major changes as we prioritize the ability to stay up to date with upstream.
-
-To start i3bar with the `-t` flag, adapt your bar configuration:
-
-```
-bar {
-        i3bar_command i3bar -t
-}
-```
-
-You can now use RGBA colors, e.g. `#FFFFFF99` where the last two digits represent the alpha channel.

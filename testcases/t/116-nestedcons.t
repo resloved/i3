@@ -53,6 +53,7 @@ my $expected = {
     name => 'root',
     orientation => $ignore,
     type => 'root',
+    window_type => undef,
     id => $ignore,
     rect => $ignore,
     deco_rect => $ignore,
@@ -71,6 +72,7 @@ my $expected = {
     'floating_nodes' => $ignore,
     workspace_layout => 'default',
     current_border_width => -1,
+    marks => $ignore,
 };
 
 # a shallow copy is sufficient, since we only ignore values at the root

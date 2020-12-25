@@ -103,9 +103,11 @@ https://github.com/i3/i3/blob/next/contrib/trivial-bar-script.sh
 version::
 	The version number (as an integer) of the i3bar protocol you will use.
 stop_signal::
-	Specify to i3bar the signal (as an integer) to send to stop your
-	processing.
-	The default value (if none is specified) is SIGSTOP.
+	Specify the signal (as an integer) that i3bar should send to request that you
+	pause your output. This is used to conserve battery power when the bar is
+	hidden by not unnecessarily computing bar updates. The default value is SIGSTOP,
+	which will unconditionally stop your process. If this is an issue, this feature
+	can be disabled by setting the value to 0.
 cont_signal::
 	Specify to i3bar the signal (as an integer) to send to continue your
 	processing.
@@ -141,6 +143,18 @@ background::
 	Overrides the background color for this particular block.
 border::
 	Overrides the border color for this particular block.
+border_top::
+        Defines the width (in pixels) of the top border of this block. Defaults
+        to 1.
+border_right::
+        Defines the width (in pixels) of the right border of this block. Defaults
+        to 1.
+border_bottom::
+        Defines the width (in pixels) of the bottom border of this block. Defaults
+        to 1.
+border_left::
+        Defines the width (in pixels) of the left border of this block. Defaults
+        to 1.
 min_width::
 	The minimum width (in pixels) of the block. If the content of the
 	+full_text+ key take less space than the specified min_width, the block
@@ -177,7 +191,7 @@ separator_block_width::
 	is 9 pixels), since the separator line is drawn in the middle.
 markup::
 	A string that indicates how the text of the block should be parsed. Set to
-	+"pango"+ to use https://developer.gnome.org/pango/stable/PangoMarkupFormat.html[Pango markup].
+	+"pango"+ to use https://developer.gnome.org/pango/stable/pango-Markup.html[Pango markup].
 	Set to +"none"+ to not use any markup (default). Pango markup only works
 	if you use a pango font.
 
@@ -215,6 +229,10 @@ An example of a block which uses all possible entries follows:
  "color": "#00ff00",
  "background": "#1c1c1c",
  "border": "#ee0000",
+ "border_top": 1,
+ "border_right": 0,
+ "border_bottom": 3,
+ "border_left": 1,
  "min_width": 300,
  "align": "right",
  "urgent": false,
@@ -242,6 +260,8 @@ button::
 relative_x, relative_y::
     Coordinates where the click occurred, with respect to the top left corner
     of the block
+output_x, output_y::
+    Coordinates relative to the current output where the click occurred
 width, height::
     Width and height (in px) of the block
 modifiers::
@@ -255,10 +275,12 @@ modifiers::
  "instance": "eth0",
  "button": 1,
  "modifiers": ["Shift", "Mod1"],
- "x": 1320,
+ "x": 1925,
  "y": 1400,
  "relative_x": 12,
  "relative_y": 8,
+ "output_x": 5,
+ "output_y": 1400,
  "width": 50,
  "height": 22
 }

@@ -25,13 +25,6 @@
  */
 #include "all.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <stdbool.h>
-#include <stdint.h>
-
 // Macros to make the YAJL API a bit easier to use.
 #define y(x, ...) (command_output.json_gen != NULL ? yajl_gen_##x(command_output.json_gen, ##__VA_ARGS__) : 0)
 #define ystr(str) (command_output.json_gen != NULL ? yajl_gen_string(command_output.json_gen, (unsigned char *)str, strlen(str)) : 0)
@@ -106,7 +99,7 @@ static void push_string(const char *identifier, char *str) {
     fprintf(stderr, "BUG: commands_parser stack full. This means either a bug "
                     "in the code, or a new command which contains more than "
                     "10 identified tokens.\n");
-    exit(1);
+    exit(EXIT_FAILURE);
 }
 
 // TODO move to a common util
@@ -128,7 +121,7 @@ static void push_long(const char *identifier, long num) {
     fprintf(stderr, "BUG: commands_parser stack full. This means either a bug "
                     "in the code, or a new command which contains more than "
                     "10 identified tokens.\n");
-    exit(1);
+    exit(EXIT_FAILURE);
 }
 
 // TODO move to a common util
@@ -181,6 +174,7 @@ static struct CommandResultIR command_output;
 static void next_state(const cmdp_token *token) {
     if (token->next_state == __CALL) {
         subcommand_output.json_gen = command_output.json_gen;
+        subcommand_output.client = command_output.client;
         subcommand_output.needs_tree_render = false;
         GENERATED_call(token->extra.call_identifier, &subcommand_output);
         state = subcommand_output.next_state;
@@ -261,10 +255,12 @@ char *parse_string(const char **walk, bool as_word) {
  *
  * Free the returned CommandResult with command_result_free().
  */
-CommandResult *parse_command(const char *input, yajl_gen gen) {
-    DLOG("COMMAND: *%s*\n", input);
+CommandResult *parse_command(const char *input, yajl_gen gen, ipc_client *client) {
+    DLOG("COMMAND: *%.4000s*\n", input);
     state = INITIAL;
     CommandResult *result = scalloc(1, sizeof(CommandResult));
+
+    command_output.client = client;
 
     /* A YAJL JSON generator used for formatting replies. */
     command_output.json_gen = gen;
@@ -499,7 +495,7 @@ int main(int argc, char *argv[]) {
     }
     yajl_gen gen = yajl_gen_alloc(NULL);
 
-    CommandResult *result = parse_command(argv[1], gen);
+    CommandResult *result = parse_command(argv[1], gen, NULL);
 
     command_result_free(result);
 

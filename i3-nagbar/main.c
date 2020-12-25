@@ -8,38 +8,34 @@
  * when the user has an error in their configuration file.
  *
  */
+#include <config.h>
+
 #include "libi3.h"
 
-#include <stdio.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <unistd.h>
-#include <string.h>
-#include <errno.h>
 #include <err.h>
-#include <stdint.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <limits.h>
-#include <fcntl.h>
 #include <paths.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
+#include <xcb/randr.h>
 #include <xcb/xcb.h>
 #include <xcb/xcb_aux.h>
-#include <xcb/xcb_event.h>
-#include <xcb/randr.h>
 #include <xcb/xcb_cursor.h>
+
+xcb_visualtype_t *visual_type = NULL;
 
 #define SN_API_NOT_YET_FROZEN 1
 #include <libsn/sn-launchee.h>
 
-#include "i3-nagbar.h"
-
-/** This is the equivalent of XC_left_ptr. I’m not sure why xcb doesn’t have a
- * constant for that. */
-#define XCB_CURSOR_LEFT_PTR 68
+#include "i3-nagbar-atoms.xmacro.h"
 
 #define MSG_PADDING logical_px(8)
 #define BTN_PADDING logical_px(3)
@@ -47,6 +43,12 @@
 #define BTN_GAP logical_px(20)
 #define CLOSE_BTN_GAP logical_px(15)
 #define BAR_BORDER logical_px(2)
+
+#define xmacro(atom) xcb_atom_t A_##atom;
+NAGBAR_ATOMS_XMACRO
+#undef xmacro
+
+#define die(...) errx(EXIT_FAILURE, __VA_ARGS__);
 
 static char *argv0 = NULL;
 
@@ -87,7 +89,7 @@ void verboselog(char *fmt, ...) {
     va_list args;
 
     va_start(args, fmt);
-    vfprintf(stdout, fmt, args);
+    vfprintf(stderr, fmt, args);
     va_end(args);
 }
 
@@ -107,10 +109,6 @@ void debuglog(char *fmt, ...) {
  * fork to avoid zombie processes. As the started application’s parent exits
  * (immediately), the application is reparented to init (process-id 1), which
  * correctly handles children, so we don’t have to do it :-).
- *
- * The shell is determined by looking for the SHELL environment variable. If it
- * does not exist, /bin/sh is used.
- *
  */
 static void start_application(const char *command) {
     printf("executing: %s\n", command);
@@ -176,7 +174,7 @@ static void handle_button_release(xcb_connection_t *conn, xcb_button_release_eve
         warn("Could not fdopen() temporary script to store the nagbar command");
         return;
     }
-    fprintf(script, "#!/bin/sh\nrm %s\n%s", script_path, button->action);
+    fprintf(script, "#!%s\nrm %s\n%s", _PATH_BSHELL, script_path, button->action);
     /* Also closes fd */
     fclose(script);
 
@@ -268,13 +266,9 @@ static int handle_expose(xcb_connection_t *conn, xcb_expose_event_t *event) {
 }
 
 /**
- * Return the position and size the i3-nagbar window should use.
- * This will be the primary output or a fallback if it cannot be determined.
+ * Tries to position the rectangle on the primary output.
  */
-static xcb_rectangle_t get_window_position(void) {
-    /* Default values if we cannot determine the primary output or its CRTC info. */
-    xcb_rectangle_t result = (xcb_rectangle_t){50, 50, 500, font.height + 2 * MSG_PADDING + BAR_BORDER};
-
+static void set_window_position_primary(xcb_rectangle_t *result) {
     xcb_randr_get_screen_resources_current_cookie_t rcookie = xcb_randr_get_screen_resources_current(conn, root);
     xcb_randr_get_output_primary_cookie_t pcookie = xcb_randr_get_output_primary(conn, root);
 
@@ -282,11 +276,12 @@ static xcb_rectangle_t get_window_position(void) {
     xcb_randr_get_screen_resources_current_reply_t *res = NULL;
 
     if ((primary = xcb_randr_get_output_primary_reply(conn, pcookie, NULL)) == NULL) {
-        DLOG("Could not determine the primary output.\n");
+        LOG("Could not determine the primary output.\n");
         goto free_resources;
     }
 
     if ((res = xcb_randr_get_screen_resources_current_reply(conn, rcookie, NULL)) == NULL) {
+        LOG("Could not query screen resources.\n");
         goto free_resources;
     }
 
@@ -294,31 +289,82 @@ static xcb_rectangle_t get_window_position(void) {
         xcb_randr_get_output_info_reply(conn,
                                         xcb_randr_get_output_info(conn, primary->output, res->config_timestamp),
                                         NULL);
-    if (output == NULL || output->crtc == XCB_NONE)
+    if (output == NULL || output->crtc == XCB_NONE) {
+        LOG("Could not query primary screen.\n");
         goto free_resources;
+    }
 
     xcb_randr_get_crtc_info_reply_t *crtc =
         xcb_randr_get_crtc_info_reply(conn,
                                       xcb_randr_get_crtc_info(conn, output->crtc, res->config_timestamp),
                                       NULL);
-    if (crtc == NULL)
-        goto free_resources;
-
-    DLOG("Found primary output on position x = %i / y = %i / w = %i / h = %i.\n",
-         crtc->x, crtc->y, crtc->width, crtc->height);
-    if (crtc->width == 0 || crtc->height == 0) {
-        DLOG("Primary output is not active, ignoring it.\n");
+    if (crtc == NULL) {
+        LOG("Could not get CRTC.\n");
         goto free_resources;
     }
 
-    result.x = crtc->x;
-    result.y = crtc->y;
+    LOG("Found primary output on position x = %i / y = %i / w = %i / h = %i.\n",
+        crtc->x, crtc->y, crtc->width, crtc->height);
+    if (crtc->width == 0 || crtc->height == 0) {
+        LOG("Primary output is not active, ignoring it.\n");
+        goto free_resources;
+    }
+
+    result->x = crtc->x;
+    result->y = crtc->y;
     goto free_resources;
 
 free_resources:
-    FREE(res);
-    FREE(primary);
-    return result;
+    free(res);
+    free(primary);
+}
+
+/**
+ * Tries to position the rectangle on the output with input focus.
+ * If unsuccessful, try to position on primary output.
+ */
+static void set_window_position_focus(xcb_rectangle_t *result) {
+    bool success = false;
+    xcb_get_input_focus_reply_t *input_focus = NULL;
+    xcb_get_geometry_reply_t *geometry = NULL;
+    xcb_translate_coordinates_reply_t *coordinates = NULL;
+
+    /* To avoid the input window disappearing while determining its position */
+    xcb_grab_server(conn);
+
+    input_focus = xcb_get_input_focus_reply(conn, xcb_get_input_focus(conn), NULL);
+    if (input_focus == NULL || input_focus->focus == XCB_NONE) {
+        LOG("Failed to receive the current input focus or no window has the input focus right now.\n");
+        goto free_resources;
+    }
+
+    geometry = xcb_get_geometry_reply(conn, xcb_get_geometry(conn, input_focus->focus), NULL);
+    if (geometry == NULL) {
+        LOG("Failed to received window geometry.\n");
+        goto free_resources;
+    }
+
+    coordinates = xcb_translate_coordinates_reply(
+        conn, xcb_translate_coordinates(conn, input_focus->focus, root, geometry->x, geometry->y), NULL);
+    if (coordinates == NULL) {
+        LOG("Failed to translate coordinates.\n");
+        goto free_resources;
+    }
+
+    LOG("Found current focus at x = %i / y = %i.\n", coordinates->dst_x, coordinates->dst_y);
+    result->x = coordinates->dst_x;
+    result->y = coordinates->dst_y;
+    success = true;
+
+free_resources:
+    xcb_ungrab_server(conn);
+    free(input_focus);
+    free(coordinates);
+    free(geometry);
+    if (!success) {
+        LOG("Could not position on focused output, trying to position on primary output.\n");
+        set_window_position_primary(result);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -351,12 +397,13 @@ int main(int argc, char *argv[]) {
         unlink(argv[0]);
         cmd = sstrdup(argv[0]);
         *(cmd + argv0_len - strlen(".nagbar_cmd")) = '\0';
-        execl("/bin/sh", "/bin/sh", cmd, NULL);
-        err(EXIT_FAILURE, "execv(/bin/sh, /bin/sh, %s)", cmd);
+        execl(_PATH_BSHELL, _PATH_BSHELL, cmd, NULL);
+        err(EXIT_FAILURE, "execl(%s, %s, %s)", _PATH_BSHELL, _PATH_BSHELL, cmd);
     }
 
     argv0 = argv[0];
 
+    bool position_on_primary = false;
     char *pattern = sstrdup("pango:monospace 8");
     int o, option_index = 0;
     enum { TYPE_ERROR = 0,
@@ -370,19 +417,21 @@ int main(int argc, char *argv[]) {
         {"help", no_argument, 0, 'h'},
         {"message", required_argument, 0, 'm'},
         {"type", required_argument, 0, 't'},
+        {"primary", no_argument, 0, 'p'},
         {0, 0, 0, 0}};
 
-    char *options_string = "b:B:f:m:t:vh";
+    char *options_string = "b:B:f:m:t:vhp";
 
     prompt = i3string_from_utf8("Please do not run this program.");
 
     while ((o = getopt_long(argc, argv, options_string, long_options, &option_index)) != -1) {
         switch (o) {
             case 'v':
+                free(pattern);
                 printf("i3-nagbar " I3_VERSION "\n");
                 return 0;
             case 'f':
-                FREE(pattern);
+                free(pattern);
                 pattern = sstrdup(optarg);
                 break;
             case 'm':
@@ -393,9 +442,13 @@ int main(int argc, char *argv[]) {
                 bar_type = (strcasecmp(optarg, "warning") == 0 ? TYPE_WARNING : TYPE_ERROR);
                 break;
             case 'h':
+                free(pattern);
                 printf("i3-nagbar " I3_VERSION "\n");
-                printf("i3-nagbar [-m <message>] [-b <button> <action>] [-B <button> <action>] [-t warning|error] [-f <font>] [-v]\n");
+                printf("i3-nagbar [-m <message>] [-b <button> <action>] [-B <button> <action>] [-t warning|error] [-f <font>] [-v] [-p]\n");
                 return 0;
+            case 'p':
+                position_on_primary = true;
+                break;
             case 'b':
             case 'B':
                 buttons = srealloc(buttons, sizeof(button_t) * (buttoncnt + 1));
@@ -423,7 +476,7 @@ int main(int argc, char *argv[]) {
 /* Place requests for the atoms we need as soon as possible */
 #define xmacro(atom) \
     xcb_intern_atom_cookie_t atom##_cookie = xcb_intern_atom(conn, 0, strlen(#atom), #atom);
-#include "atoms.xmacro"
+    NAGBAR_ATOMS_XMACRO
 #undef xmacro
 
     /* Init startup notification. */
@@ -459,26 +512,20 @@ int main(int argc, char *argv[]) {
         err(EXIT_FAILURE, "pledge");
 #endif
 
-    xcb_rectangle_t win_pos = get_window_position();
-
-    xcb_cursor_t cursor;
-    xcb_cursor_context_t *cursor_ctx;
-    if (xcb_cursor_context_new(conn, root_screen, &cursor_ctx) == 0) {
-        cursor = xcb_cursor_load_cursor(cursor_ctx, "left_ptr");
-        xcb_cursor_context_free(cursor_ctx);
+    /* Default values if we cannot determine the preferred window position. */
+    xcb_rectangle_t win_pos = (xcb_rectangle_t){50, 50, 500, font.height + 2 * MSG_PADDING + BAR_BORDER};
+    if (position_on_primary) {
+        set_window_position_primary(&win_pos);
     } else {
-        cursor = xcb_generate_id(conn);
-        i3Font cursor_font = load_font("cursor", false);
-        xcb_create_glyph_cursor(
-            conn,
-            cursor,
-            cursor_font.specific.xcb.id,
-            cursor_font.specific.xcb.id,
-            XCB_CURSOR_LEFT_PTR,
-            XCB_CURSOR_LEFT_PTR + 1,
-            0, 0, 0,
-            65535, 65535, 65535);
+        set_window_position_focus(&win_pos);
     }
+
+    xcb_cursor_context_t *cursor_ctx;
+    if (xcb_cursor_context_new(conn, root_screen, &cursor_ctx) < 0) {
+        errx(EXIT_FAILURE, "Cannot allocate xcursor context");
+    }
+    xcb_cursor_t cursor = xcb_cursor_load_cursor(cursor_ctx, "left_ptr");
+    xcb_cursor_context_free(cursor_ctx);
 
     /* Open an input window */
     win = xcb_generate_id(conn);
@@ -517,7 +564,7 @@ int main(int argc, char *argv[]) {
         A_##name = reply->atom;                                                            \
         free(reply);                                                                       \
     } while (0);
-#include "atoms.xmacro"
+    NAGBAR_ATOMS_XMACRO
 #undef xmacro
 
     /* Set dock mode */
@@ -610,7 +657,7 @@ int main(int argc, char *argv[]) {
         free(event);
     }
 
-    FREE(pattern);
+    free(pattern);
     draw_util_surface_free(conn, &bar);
 
     return 0;

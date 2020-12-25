@@ -10,7 +10,6 @@
  *
  */
 #include "all.h"
-
 #include "yajl_utils.h"
 
 static void con_on_remove_child(Con *con);
@@ -92,8 +91,8 @@ void con_free(Con *con) {
         FREE(mark->name);
         FREE(mark);
     }
-    free(con);
     DLOG("con %p freed\n", con);
+    free(con);
 }
 
 static void _con_attach(Con *con, Con *parent, Con *previous, bool ignore_focus) {
@@ -132,13 +131,37 @@ static void _con_attach(Con *con, Con *parent, Con *previous, bool ignore_focus)
         goto add_to_focus_head;
     }
 
+    if (parent->type == CT_DOCKAREA) {
+        /* Insert dock client, sorting alphanumerically by class and then
+         * instance name. This makes dock client order deterministic. As a side
+         * effect, bars without a custom bar id will be sorted according to
+         * their declaration order in the config file. See #3491. */
+        current = NULL;
+        TAILQ_FOREACH (loop, nodes_head, nodes) {
+            int result = strcasecmp_nullable(con->window->class_class, loop->window->class_class);
+            if (result == 0) {
+                result = strcasecmp_nullable(con->window->class_instance, loop->window->class_instance);
+            }
+            if (result < 0) {
+                current = loop;
+                break;
+            }
+        }
+        if (current) {
+            TAILQ_INSERT_BEFORE(loop, con, nodes);
+        } else {
+            TAILQ_INSERT_TAIL(nodes_head, con, nodes);
+        }
+        goto add_to_focus_head;
+    }
+
     if (con->type == CT_FLOATING_CON) {
         DLOG("Inserting into floating containers\n");
         TAILQ_INSERT_TAIL(&(parent->floating_head), con, floating_windows);
     } else {
         if (!ignore_focus) {
             /* Get the first tiling container in focus stack */
-            TAILQ_FOREACH(loop, &(parent->focus_head), focused) {
+            TAILQ_FOREACH (loop, &(parent->focus_head), focused) {
                 if (loop->type == CT_FLOATING_CON)
                     continue;
                 current = loop;
@@ -266,6 +289,41 @@ void con_activate(Con *con) {
 }
 
 /*
+ * Activates the container like in con_activate but removes fullscreen
+ * restrictions and properly warps the pointer if needed.
+ *
+ */
+void con_activate_unblock(Con *con) {
+    Con *ws = con_get_workspace(con);
+    Con *previous_focus = focused;
+    Con *fullscreen_on_ws = con_get_fullscreen_covering_ws(ws);
+
+    if (fullscreen_on_ws && fullscreen_on_ws != con && !con_has_parent(con, fullscreen_on_ws)) {
+        con_disable_fullscreen(fullscreen_on_ws);
+    }
+
+    con_activate(con);
+
+    /* If the container is not on the current workspace, workspace_show() will
+     * switch to a different workspace and (if enabled) trigger a mouse pointer
+     * warp to the currently focused container (!) on the target workspace.
+     *
+     * Therefore, before calling workspace_show(), we make sure that 'con' will
+     * be focused on the workspace. However, we cannot just con_focus(con)
+     * because then the pointer will not be warped at all (the code thinks we
+     * are already there).
+     *
+     * So we focus 'con' to make it the currently focused window of the target
+     * workspace, then revert focus. */
+    if (ws != con_get_workspace(previous_focus)) {
+        con_activate(previous_focus);
+        /* Now switch to the workspace, then focus */
+        workspace_show(ws);
+        con_activate(con);
+    }
+}
+
+/*
  * Closes the given container.
  *
  */
@@ -369,7 +427,7 @@ bool con_is_sticky(Con *con) {
         return true;
 
     Con *child;
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         if (con_is_sticky(child))
             return true;
     }
@@ -456,8 +514,7 @@ Con *con_parent_with_orientation(Con *con, orientation_t orientation) {
 struct bfs_entry {
     Con *con;
 
-    TAILQ_ENTRY(bfs_entry)
-    entries;
+    TAILQ_ENTRY(bfs_entry) entries;
 };
 
 /*
@@ -469,9 +526,7 @@ Con *con_get_fullscreen_con(Con *con, fullscreen_mode_t fullscreen_mode) {
 
     /* TODO: is breadth-first-search really appropriate? (check as soon as
      * fullscreen levels and fullscreen for containers is implemented) */
-    TAILQ_HEAD(bfs_head, bfs_entry)
-    bfs_head = TAILQ_HEAD_INITIALIZER(bfs_head);
-
+    TAILQ_HEAD(bfs_head, bfs_entry) bfs_head = TAILQ_HEAD_INITIALIZER(bfs_head);
     struct bfs_entry *entry = smalloc(sizeof(struct bfs_entry));
     entry->con = con;
     TAILQ_INSERT_TAIL(&bfs_head, entry, entries);
@@ -492,13 +547,13 @@ Con *con_get_fullscreen_con(Con *con, fullscreen_mode_t fullscreen_mode) {
         TAILQ_REMOVE(&bfs_head, entry, entries);
         free(entry);
 
-        TAILQ_FOREACH(child, &(current->nodes_head), nodes) {
+        TAILQ_FOREACH (child, &(current->nodes_head), nodes) {
             entry = smalloc(sizeof(struct bfs_entry));
             entry->con = child;
             TAILQ_INSERT_TAIL(&bfs_head, entry, entries);
         }
 
-        TAILQ_FOREACH(child, &(current->floating_head), floating_windows) {
+        TAILQ_FOREACH (child, &(current->floating_head), floating_windows) {
             entry = smalloc(sizeof(struct bfs_entry));
             entry->con = child;
             TAILQ_INSERT_TAIL(&bfs_head, entry, entries);
@@ -611,9 +666,11 @@ bool con_has_parent(Con *con, Con *parent) {
  */
 Con *con_by_window_id(xcb_window_t window) {
     Con *con;
-    TAILQ_FOREACH(con, &all_cons, all_cons)
-    if (con->window != NULL && con->window->id == window)
-        return con;
+    TAILQ_FOREACH (con, &all_cons, all_cons) {
+        if (con->window != NULL && con->window->id == window) {
+            return con;
+        }
+    }
     return NULL;
 }
 
@@ -624,7 +681,7 @@ Con *con_by_window_id(xcb_window_t window) {
  */
 Con *con_by_con_id(long target) {
     Con *con;
-    TAILQ_FOREACH(con, &all_cons, all_cons) {
+    TAILQ_FOREACH (con, &all_cons, all_cons) {
         if (con == (Con *)target) {
             return con;
         }
@@ -649,9 +706,11 @@ bool con_exists(Con *con) {
  */
 Con *con_by_frame_id(xcb_window_t frame) {
     Con *con;
-    TAILQ_FOREACH(con, &all_cons, all_cons)
-    if (con->frame.id == frame)
-        return con;
+    TAILQ_FOREACH (con, &all_cons, all_cons) {
+        if (con->frame.id == frame) {
+            return con;
+        }
+    }
     return NULL;
 }
 
@@ -662,7 +721,7 @@ Con *con_by_frame_id(xcb_window_t frame) {
  */
 Con *con_by_mark(const char *mark) {
     Con *con;
-    TAILQ_FOREACH(con, &all_cons, all_cons) {
+    TAILQ_FOREACH (con, &all_cons, all_cons) {
         if (con_has_mark(con, mark))
             return con;
     }
@@ -676,7 +735,7 @@ Con *con_by_mark(const char *mark) {
  */
 bool con_has_mark(Con *con, const char *mark) {
     mark_t *current;
-    TAILQ_FOREACH(current, &(con->marks_head), marks) {
+    TAILQ_FOREACH (current, &(con->marks_head), marks) {
         if (strcmp(current->name, mark) == 0)
             return true;
     }
@@ -739,7 +798,7 @@ void con_unmark(Con *con, const char *name) {
     Con *current;
     if (name == NULL) {
         DLOG("Unmarking all containers.\n");
-        TAILQ_FOREACH(current, &all_cons, all_cons) {
+        TAILQ_FOREACH (current, &all_cons, all_cons) {
             if (con != NULL && current != con)
                 continue;
 
@@ -770,7 +829,7 @@ void con_unmark(Con *con, const char *name) {
         current->mark_changed = true;
 
         mark_t *mark;
-        TAILQ_FOREACH(mark, &(current->marks_head), marks) {
+        TAILQ_FOREACH (mark, &(current->marks_head), marks) {
             if (strcmp(mark->name, name) != 0)
                 continue;
 
@@ -795,8 +854,8 @@ Con *con_for_window(Con *con, i3Window *window, Match **store_match) {
     //DLOG("searching con for window %p starting at con %p\n", window, con);
     //DLOG("class == %s\n", window->class_class);
 
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
-        TAILQ_FOREACH(match, &(child->swallow_head), matches) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (match, &(child->swallow_head), matches) {
             if (!match_matches_window(match, window))
                 continue;
             if (store_match != NULL)
@@ -808,8 +867,8 @@ Con *con_for_window(Con *con, i3Window *window, Match **store_match) {
             return result;
     }
 
-    TAILQ_FOREACH(child, &(con->floating_head), floating_windows) {
-        TAILQ_FOREACH(match, &(child->swallow_head), matches) {
+    TAILQ_FOREACH (child, &(con->floating_head), floating_windows) {
+        TAILQ_FOREACH (match, &(child->swallow_head), matches) {
             if (!match_matches_window(match, window))
                 continue;
             if (store_match != NULL)
@@ -828,7 +887,7 @@ static int num_focus_heads(Con *con) {
     int focus_heads = 0;
 
     Con *current;
-    TAILQ_FOREACH(current, &(con->focus_head), focused) {
+    TAILQ_FOREACH (current, &(con->focus_head), focused) {
         focus_heads++;
     }
 
@@ -845,7 +904,7 @@ Con **get_focus_order(Con *con) {
     Con **focus_order = smalloc(focus_heads * sizeof(Con *));
     Con *current;
     int idx = 0;
-    TAILQ_FOREACH(current, &(con->focus_head), focused) {
+    TAILQ_FOREACH (current, &(con->focus_head), focused) {
         assert(idx < focus_heads);
         focus_order[idx++] = current;
     }
@@ -888,8 +947,9 @@ int con_num_children(Con *con) {
     Con *child;
     int children = 0;
 
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes)
-    children++;
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
+        children++;
+    }
 
     return children;
 }
@@ -905,7 +965,7 @@ int con_num_visible_children(Con *con) {
 
     int children = 0;
     Con *current = NULL;
-    TAILQ_FOREACH(current, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (current, &(con->nodes_head), nodes) {
         /* Visible leaf nodes are a child. */
         if (!con_is_hidden(current) && con_is_leaf(current))
             children++;
@@ -930,11 +990,11 @@ int con_num_windows(Con *con) {
 
     int num = 0;
     Con *current = NULL;
-    TAILQ_FOREACH(current, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (current, &(con->nodes_head), nodes) {
         num += con_num_windows(current);
     }
 
-    TAILQ_FOREACH(current, &(con->floating_head), floating_windows) {
+    TAILQ_FOREACH (current, &(con->floating_head), floating_windows) {
         num += con_num_windows(current);
     }
 
@@ -955,7 +1015,7 @@ void con_fix_percent(Con *con) {
     // with a percentage set we have
     double total = 0.0;
     int children_with_percent = 0;
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         if (child->percent > 0.0) {
             total += child->percent;
             ++children_with_percent;
@@ -965,7 +1025,7 @@ void con_fix_percent(Con *con) {
     // if there were children without a percentage set, set to a value that
     // will make those children proportional to all others
     if (children_with_percent != children) {
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             if (child->percent <= 0.0) {
                 if (children_with_percent == 0) {
                     total += (child->percent = 1.0);
@@ -979,11 +1039,11 @@ void con_fix_percent(Con *con) {
     // if we got a zero, just distribute the space equally, otherwise
     // distribute according to the proportions we got
     if (total == 0.0) {
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             child->percent = 1.0 / children;
         }
     } else if (total != 1.0) {
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             child->percent /= total;
         }
     }
@@ -1160,7 +1220,7 @@ static bool _con_move_to_con(Con *con, Con *target, bool behind_focused, bool fi
     /* 1: save the container which is going to be focused after the current
      * container is moved away */
     Con *focus_next = NULL;
-    if (!ignore_focus && source_ws == current_ws) {
+    if (!ignore_focus && source_ws == current_ws && target_ws != source_ws) {
         focus_next = con_descend_focused(source_ws);
         if (focus_next == con || con_has_parent(focus_next, con)) {
             focus_next = con_next_focused(con);
@@ -1198,9 +1258,17 @@ static bool _con_move_to_con(Con *con, Con *target, bool behind_focused, bool fi
     }
 
     /* If moving a fullscreen container and the destination already has a
-     * fullscreen window on it, un-fullscreen the target's fullscreen con. */
+     * fullscreen window on it, un-fullscreen the target's fullscreen con.
+     * con->fullscreen_mode is not enough in some edge cases:
+     * 1. con is CT_FLOATING_CON, child is fullscreen.
+     * 2. con is the parent of a fullscreen container, can be triggered by
+     * moving the parent with command criteria.
+     */
     Con *fullscreen = con_get_fullscreen_con(target_ws, CF_OUTPUT);
-    if (con->fullscreen_mode != CF_NONE && fullscreen != NULL) {
+    const bool con_has_fullscreen = con->fullscreen_mode != CF_NONE ||
+                                    con_get_fullscreen_con(con, CF_GLOBAL) ||
+                                    con_get_fullscreen_con(con, CF_OUTPUT);
+    if (con_has_fullscreen && fullscreen != NULL) {
         con_toggle_fullscreen(fullscreen, CF_OUTPUT);
         fullscreen = NULL;
     }
@@ -1258,34 +1326,17 @@ static bool _con_move_to_con(Con *con, Con *target, bool behind_focused, bool fi
 
     /* 8. If anything within the container is associated with a startup sequence,
      * delete it so child windows won't be created on the old workspace. */
-    struct Startup_Sequence *sequence;
-    xcb_get_property_cookie_t cookie;
-    xcb_get_property_reply_t *startup_id_reply;
-
     if (!con_is_leaf(con)) {
         Con *child;
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             if (!child->window)
                 continue;
-
-            cookie = xcb_get_property(conn, false, child->window->id,
-                                      A__NET_STARTUP_ID, XCB_GET_PROPERTY_TYPE_ANY, 0, 512);
-            startup_id_reply = xcb_get_property_reply(conn, cookie, NULL);
-
-            sequence = startup_sequence_get(child->window, startup_id_reply, true);
-            if (sequence != NULL)
-                startup_sequence_delete(sequence);
+            startup_sequence_delete_by_window(child->window);
         }
     }
 
     if (con->window) {
-        cookie = xcb_get_property(conn, false, con->window->id,
-                                  A__NET_STARTUP_ID, XCB_GET_PROPERTY_TYPE_ANY, 0, 512);
-        startup_id_reply = xcb_get_property_reply(conn, cookie, NULL);
-
-        sequence = startup_sequence_get(con->window, startup_id_reply, true);
-        if (sequence != NULL)
-            startup_sequence_delete(sequence);
+        startup_sequence_delete_by_window(con->window);
     }
 
     /* 9. If the container was marked urgent, move the urgency hint. */
@@ -1315,6 +1366,13 @@ bool con_move_to_mark(Con *con, const char *mark) {
         return false;
     }
 
+    /* For target containers in the scratchpad, we just send the window to the scratchpad. */
+    if (con_get_workspace(target) == workspace_get("__i3_scratch")) {
+        DLOG("target container is in the scratchpad, moving container to scratchpad.\n");
+        scratchpad_move(con);
+        return true;
+    }
+
     /* For floating target containers, we just send the window to the same workspace. */
     if (con_is_floating(target)) {
         DLOG("target container is floating, moving container to target's workspace.\n");
@@ -1322,8 +1380,8 @@ bool con_move_to_mark(Con *con, const char *mark) {
         return true;
     }
 
-    if (target->type == CT_WORKSPACE) {
-        DLOG("target container is a workspace, simply moving the container there.\n");
+    if (target->type == CT_WORKSPACE && con_is_leaf(target)) {
+        DLOG("target container is an empty workspace, simply moving the container there.\n");
         con_move_to_workspace(con, target, true, false, false);
         return true;
     }
@@ -1511,7 +1569,7 @@ Con *con_descend_tiling_focused(Con *con) {
         return next;
     do {
         before = next;
-        TAILQ_FOREACH(child, &(next->focus_head), focused) {
+        TAILQ_FOREACH (child, &(next->focus_head), focused) {
             if (child->type == CT_FLOATING_CON)
                 continue;
 
@@ -1546,7 +1604,7 @@ Con *con_descend_direction(Con *con, direction_t direction) {
             /* Wrong orientation. We use the last focused con. Within that con,
              * we recurse to chose the left/right con or at least the last
              * focused one. */
-            TAILQ_FOREACH(current, &(con->focus_head), focused) {
+            TAILQ_FOREACH (current, &(con->focus_head), focused) {
                 if (current->type != CT_FLOATING_CON) {
                     most = current;
                     break;
@@ -1571,7 +1629,7 @@ Con *con_descend_direction(Con *con, direction_t direction) {
             /* Wrong orientation. We use the last focused con. Within that con,
              * we recurse to chose the top/bottom con or at least the last
              * focused one. */
-            TAILQ_FOREACH(current, &(con->focus_head), focused) {
+            TAILQ_FOREACH (current, &(con->focus_head), focused) {
                 if (current->type != CT_FLOATING_CON) {
                     most = current;
                     break;
@@ -2002,7 +2060,7 @@ Rect con_minimum_size(Con *con) {
     if (con->layout == L_STACKED || con->layout == L_TABBED) {
         uint32_t max_width = 0, max_height = 0, deco_height = 0;
         Con *child;
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             Rect min = con_minimum_size(child);
             deco_height += child->deco_rect.height;
             max_width = max(max_width, min.width);
@@ -2019,7 +2077,7 @@ Rect con_minimum_size(Con *con) {
     if (con_is_split(con)) {
         uint32_t width = 0, height = 0;
         Con *child;
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             Rect min = con_minimum_size(child);
             if (con->layout == L_SPLITH) {
                 width += min.width;
@@ -2107,7 +2165,7 @@ bool con_has_urgent_child(Con *con) {
 
     /* We are not interested in floating windows since they can only be
      * attached to a workspace → nodes_head instead of focus_head */
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         if (con_has_urgent_child(child))
             return true;
     }
@@ -2229,7 +2287,7 @@ char *con_get_tree_representation(Con *con) {
 
     /* 2) append representation of children */
     Con *child;
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         char *child_txt = con_get_tree_representation(child);
 
         char *tmp_buf;
@@ -2322,11 +2380,11 @@ i3String *con_parse_title_format(Con *con) {
     char *formatted_str = format_placeholders(con->title_format, &placeholders[0], num);
     i3String *formatted = i3string_from_utf8(formatted_str);
     i3string_set_markup(formatted, pango_markup);
-    FREE(formatted_str);
 
-    for (size_t i = 0; i < num; i++) {
-        FREE(placeholders[i].value);
-    }
+    free(formatted_str);
+    free(title);
+    free(class);
+    free(instance);
 
     return formatted;
 }
@@ -2442,6 +2500,8 @@ bool con_swap(Con *first, Con *second) {
     con_fix_percent(first->parent);
     con_fix_percent(second->parent);
 
+    FREE(first->deco_render_params);
+    FREE(second->deco_render_params);
     con_force_split_parents_redraw(first);
     con_force_split_parents_redraw(second);
 
@@ -2455,4 +2515,41 @@ bool con_swap(Con *first, Con *second) {
  */
 uint32_t con_rect_size_in_orientation(Con *con) {
     return (con_orientation(con) == HORIZ ? con->rect.width : con->rect.height);
+}
+
+/*
+ * Merges container specific data that should move with the window (e.g. marks,
+ * title format, and the window itself) into another container, and closes the
+ * old container.
+ *
+ */
+void con_merge_into(Con *old, Con *new) {
+    new->window = old->window;
+    old->window = NULL;
+
+    if (old->title_format) {
+        FREE(new->title_format);
+        new->title_format = old->title_format;
+        old->title_format = NULL;
+    }
+
+    if (old->sticky_group) {
+        FREE(new->sticky_group);
+        new->sticky_group = old->sticky_group;
+        old->sticky_group = NULL;
+    }
+
+    new->sticky = old->sticky;
+
+    con_set_urgency(new, old->urgent);
+
+    mark_t *mark;
+    TAILQ_FOREACH (mark, &(old->marks_head), marks) {
+        TAILQ_INSERT_TAIL(&(new->marks_head), mark, marks);
+        ipc_send_window_event("mark", new);
+    }
+    new->mark_changed = (TAILQ_FIRST(&(old->marks_head)) != NULL);
+    TAILQ_INIT(&(old->marks_head));
+
+    tree_close_internal(old, DONT_KILL_WINDOW, false);
 }

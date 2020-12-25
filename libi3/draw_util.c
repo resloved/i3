@@ -9,16 +9,15 @@
 #include "libi3.h"
 
 #include <stdlib.h>
-#include <err.h>
 #include <string.h>
+
 #include <xcb/xcb.h>
 #include <xcb/xcb_aux.h>
-#include <cairo/cairo-xcb.h>
 
 #define M_PI 3.14159265358979323846
 
 /* The default visual_type to use if none is specified when creating the surface. Must be defined globally. */
-xcb_visualtype_t *visual_type;
+extern xcb_visualtype_t *visual_type;
 
 /* Forward declarations */
 static void draw_util_set_source_color(surface_t *surface, color_t color);

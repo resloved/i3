@@ -7,15 +7,15 @@
  */
 #include "common.h"
 
-#include <stdio.h>
-#include <i3/ipc.h>
-#include <string.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <errno.h>
 #include <ev.h>
 #include <getopt.h>
 #include <glob.h>
+#include <i3/ipc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct ev_loop *main_loop;
 
 /*
  * Having verboselog(), errorlog() and debuglog() is necessary when using libi3.
@@ -56,13 +56,14 @@ static char *expand_path(char *path) {
 }
 
 static void print_usage(char *elf_name) {
-    printf("Usage: %s -b bar_id [-s sock_path] [-h] [-v]\n", elf_name);
+    printf("Usage: %s -b bar_id [-s sock_path] [-t] [-h] [-v]\n", elf_name);
     printf("\n");
-    printf("-b, --bar_id  <bar_id>\tBar ID for which to get the configuration\n");
-    printf("-s, --socket  <sock_path>\tConnect to i3 via <sock_path>\n");
-    printf("-h, --help    Display this help message and exit\n");
-    printf("-v, --version Display version number and exit\n");
-    printf("-V, --verbose Enable verbose mode\n");
+    printf("-b, --bar_id       <bar_id>\tBar ID for which to get the configuration\n");
+    printf("-s, --socket       <sock_path>\tConnect to i3 via <sock_path>\n");
+    printf("-t, --transparency Enable transparency (RGBA colors)\n");
+    printf("-h, --help         Display this help message and exit\n");
+    printf("-v, --version      Display version number and exit\n");
+    printf("-V, --verbose      Enable verbose mode\n");
     printf("\n");
     printf(" PLEASE NOTE that i3bar will be automatically started by i3\n"
            " as soon as there is a 'bar' configuration block in your\n"
@@ -91,13 +92,7 @@ static void sig_cb(struct ev_loop *loop, ev_signal *watcher, int revents) {
 }
 
 int main(int argc, char **argv) {
-    int opt;
-    int option_index = 0;
-    char *socket_path = getenv("I3SOCK");
-    if (socket_path != NULL) {
-        socket_path = sstrdup(socket_path);
-    }
-    char *i3_default_sock_path = "/tmp/i3-ipc.sock";
+    char *socket_path = NULL;
 
     /* Initialize the standard config to use 0 as default */
     memset(&config, '\0', sizeof(config_t));
@@ -111,6 +106,8 @@ int main(int argc, char **argv) {
         {"verbose", no_argument, 0, 'V'},
         {NULL, 0, 0, 0}};
 
+    int opt;
+    int option_index = 0;
     while ((opt = getopt_long(argc, argv, "b:s:thvV", long_opt, &option_index)) != -1) {
         switch (opt) {
             case 's':
@@ -143,9 +140,16 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-    main_loop = ev_default_loop(0);
-
+    main_loop = ev_default_loop(0); /* needed in init_xcb_early */
     char *atom_sock_path = init_xcb_early();
+
+    /* Select a socket_path if the user hasn't specified one */
+    if (socket_path == NULL) {
+        socket_path = getenv("I3SOCK");
+        if (socket_path != NULL) {
+            socket_path = sstrdup(socket_path);
+        }
+    }
 
     if (socket_path == NULL) {
         socket_path = atom_sock_path;
@@ -154,8 +158,9 @@ int main(int argc, char **argv) {
     }
 
     if (socket_path == NULL) {
+        char *i3_default_sock_path = "/tmp/i3-ipc.sock";
         ELOG("No socket path specified, default to %s\n", i3_default_sock_path);
-        socket_path = expand_path(i3_default_sock_path);
+        socket_path = sstrdup(i3_default_sock_path);
     }
 
     init_dpi();

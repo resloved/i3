@@ -7,11 +7,9 @@
  */
 #include "libi3.h"
 
-#include <sys/types.h>
 #include <string.h>
 
-#if defined(__APPLE__)
-
+#ifndef HAVE_STRNDUP
 /*
  * Taken from FreeBSD
  * Returns a pointer to a new string which is a duplicate of the
@@ -30,5 +28,4 @@ char *strndup(const char *str, size_t n) {
     copy[len] = '\0';
     return (copy);
 }
-
 #endif

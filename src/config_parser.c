@@ -25,16 +25,17 @@
  */
 #include "all.h"
 
+#include <fcntl.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <unistd.h>
+
 #include <xcb/xcb_xrm.h>
 
 // Macros to make the YAJL API a bit easier to use.
@@ -126,7 +127,7 @@ static void push_string(const char *identifier, const char *str) {
     fprintf(stderr, "BUG: config_parser stack full. This means either a bug "
                     "in the code, or a new command which contains more than "
                     "10 identified tokens.\n");
-    exit(1);
+    exit(EXIT_FAILURE);
 }
 
 static void push_long(const char *identifier, long num) {
@@ -146,7 +147,7 @@ static void push_long(const char *identifier, long num) {
     fprintf(stderr, "BUG: config_parser stack full. This means either a bug "
                     "in the code, or a new command which contains more than "
                     "10 identified tokens.\n");
-    exit(1);
+    exit(EXIT_FAILURE);
 }
 
 static const char *get_string(const char *identifier) {
@@ -820,7 +821,7 @@ void start_config_error_nagbar(const char *configpath, bool has_errors) {
  */
 static void upsert_variable(struct variables_head *variables, char *key, char *value) {
     struct Variable *current;
-    SLIST_FOREACH(current, variables, variables) {
+    SLIST_FOREACH (current, variables, variables) {
         if (strcmp(current->key, key) != 0) {
             continue;
         }
@@ -838,7 +839,7 @@ static void upsert_variable(struct variables_head *variables, char *key, char *v
     new->value = sstrdup(value);
     /* ensure that the correct variable is matched in case of one being
      * the prefix of another */
-    SLIST_FOREACH(test, variables, variables) {
+    SLIST_FOREACH (test, variables, variables) {
         if (strlen(new->key) >= strlen(test->key))
             break;
         loc = test;
@@ -1013,7 +1014,7 @@ bool parse_file(const char *f, bool use_nagbar) {
      * variables (otherwise we will count them twice, which is bad when
      * 'extra' is negative) */
     char *bufcopy = sstrdup(buf);
-    SLIST_FOREACH(current, &variables, variables) {
+    SLIST_FOREACH (current, &variables, variables) {
         int extra = (strlen(current->value) - strlen(current->key));
         char *next;
         for (next = bufcopy;
@@ -1033,11 +1034,12 @@ bool parse_file(const char *f, bool use_nagbar) {
     destwalk = new;
     while (walk < (buf + stbuf.st_size)) {
         /* Find the next variable */
-        SLIST_FOREACH(current, &variables, variables)
-        current->next_match = strcasestr(walk, current->key);
+        SLIST_FOREACH (current, &variables, variables) {
+            current->next_match = strcasestr(walk, current->key);
+        }
         nearest = NULL;
         int distance = stbuf.st_size;
-        SLIST_FOREACH(current, &variables, variables) {
+        SLIST_FOREACH (current, &variables, variables) {
             if (current->next_match == NULL)
                 continue;
             if ((current->next_match - walk) < distance) {

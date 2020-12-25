@@ -32,7 +32,7 @@ void scratchpad_move(Con *con) {
     }
     DLOG("should move con %p to __i3_scratch\n", con);
 
-    Con *__i3_scratch = workspace_get("__i3_scratch", NULL);
+    Con *__i3_scratch = workspace_get("__i3_scratch");
     if (con_get_workspace(con) == __i3_scratch) {
         DLOG("This window is already on __i3_scratch.\n");
         return;
@@ -40,9 +40,7 @@ void scratchpad_move(Con *con) {
 
     /* If the current con is in fullscreen mode, we need to disable that,
      *  as a scratchpad window should never be in fullscreen mode */
-    if (focused && focused->type != CT_WORKSPACE && focused->fullscreen_mode != CF_NONE) {
-        con_toggle_fullscreen(focused, CF_OUTPUT);
-    }
+    con_disable_fullscreen(con);
 
     /* 1: Ensure the window or any parent is floating. From now on, we deal
      * with the CT_FLOATING_CON. We use automatic == false because the user
@@ -86,7 +84,7 @@ void scratchpad_move(Con *con) {
  */
 bool scratchpad_show(Con *con) {
     DLOG("should show scratchpad window %p\n", con);
-    Con *__i3_scratch = workspace_get("__i3_scratch", NULL);
+    Con *__i3_scratch = workspace_get("__i3_scratch");
     Con *floating;
 
     /* If this was 'scratchpad show' without criteria, we check if the
@@ -114,7 +112,7 @@ bool scratchpad_show(Con *con) {
      * unfocused scratchpad on the current workspace and focus it */
     Con *walk_con;
     Con *focused_ws = con_get_workspace(focused);
-    TAILQ_FOREACH(walk_con, &(focused_ws->floating_head), floating_windows) {
+    TAILQ_FOREACH (walk_con, &(focused_ws->floating_head), floating_windows) {
         if (!con && (floating = con_inside_floating(walk_con)) &&
             floating->scratchpad_state != SCRATCHPAD_NONE &&
             floating != con_inside_floating(focused)) {
@@ -132,7 +130,7 @@ bool scratchpad_show(Con *con) {
      * visible scratchpad window on another workspace. In this case we move it
      * to the current workspace. */
     focused_ws = con_get_workspace(focused);
-    TAILQ_FOREACH(walk_con, &all_cons, all_cons) {
+    TAILQ_FOREACH (walk_con, &all_cons, all_cons) {
         Con *walk_ws = con_get_workspace(walk_con);
         if (!con && walk_ws &&
             !con_is_internal(walk_ws) && focused_ws != walk_ws &&
@@ -140,7 +138,7 @@ bool scratchpad_show(Con *con) {
             floating->scratchpad_state != SCRATCHPAD_NONE) {
             DLOG("Found a visible scratchpad window on another workspace,\n");
             DLOG("moving it to this workspace: con = %p\n", walk_con);
-            con_move_to_workspace(walk_con, focused_ws, true, false, false);
+            con_move_to_workspace(floating, focused_ws, true, false, false);
             con_activate(con_descend_focused(walk_con));
             return true;
         }
@@ -247,7 +245,7 @@ static int _lcm(const int m, const int n) {
  *
  */
 void scratchpad_fix_resolution(void) {
-    Con *__i3_scratch = workspace_get("__i3_scratch", NULL);
+    Con *__i3_scratch = workspace_get("__i3_scratch");
     Con *__i3_output = con_get_output(__i3_scratch);
     DLOG("Current resolution: (%d, %d) %d x %d\n",
          __i3_output->rect.x, __i3_output->rect.y,
@@ -255,7 +253,7 @@ void scratchpad_fix_resolution(void) {
     Con *output;
     int new_width = -1,
         new_height = -1;
-    TAILQ_FOREACH(output, &(croot->nodes_head), nodes) {
+    TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
         if (output == __i3_output)
             continue;
         DLOG("output %s's resolution: (%d, %d) %d x %d\n",
@@ -279,14 +277,14 @@ void scratchpad_fix_resolution(void) {
 
     Rect new_rect = __i3_output->rect;
 
-    if (memcmp(&old_rect, &new_rect, sizeof(Rect)) == 0) {
+    if (rect_equals(new_rect, old_rect)) {
         DLOG("Scratchpad size unchanged.\n");
         return;
     }
 
     DLOG("Fixing coordinates of scratchpad windows\n");
     Con *con;
-    TAILQ_FOREACH(con, &(__i3_scratch->floating_head), floating_windows) {
+    TAILQ_FOREACH (con, &(__i3_scratch->floating_head), floating_windows) {
         floating_fix_coordinates(con, &old_rect, &new_rect);
     }
 }
