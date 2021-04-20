@@ -36,7 +36,7 @@ For support & all other kinds of questions, you can ask your question on the off
 
 ## i3
 
-### gaps
+### Gaps
 
 *Note:* In order to use gaps you need to disable window titlebars. This can be done by adding the following line to your config.
 
