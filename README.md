@@ -5,13 +5,18 @@
 
 # Rounded i3-gaps
 
-## What is i3-gaps?
+For anyone wondering how to configure rounded window corners, see [configuration](#rounded-window-corners).
 
-Rounded i3-gaps is a fork of i3-gaps that adds rounding.
+## What is Rounded i3-gaps?
+
+Rounded i3-gaps is a fork of i3-gaps that adds rounding to window corners. 
+
+## What is i3-gaps
 
 i3-gaps is a fork of [i3wm](https://www.i3wm.org), a tiling window manager for X11. It is kept up to date with upstream, adding a few additional features such as gaps between windows (see below for a complete list).
 
 ![i3](https://i.imgur.com/KC7GL4D.png)
+
 
 ## How do I install i3-gaps?
 
@@ -80,7 +85,7 @@ You can find an example configuration in the [wiki](https://github.com/Airblader
 
 ### Rounded Window Corners
 
-Rounded corners can be configured by adding this to your config. `5` can be replaced with any integer, it simply defines how rounded the corners are.
+Rounded corners can be configured by adding this to your config. `5` can be replaced with any integer, it just defines the radius of the corner.
 
 ```
 border_radius 5
