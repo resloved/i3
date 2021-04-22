@@ -3,7 +3,7 @@
 [![Forks](https://img.shields.io/github/forks/Airblader/i3.svg)](https://github.com/Airblader/i3/network)
 [![Stars](https://img.shields.io/github/stars/Airblader/i3.svg)](https://github.com/Airblader/i3/stargazers)
 
-# i3-gaps
+# Rounded i3-gaps
 
 ## What is i3-gaps?
 
